@@ -1,0 +1,223 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Fredoka", "Cairo", system-ui, -apple-system, sans-serif;
+  --font-sans: "Plus Jakarta Sans", "Cairo", system-ui, -apple-system, sans-serif;
+  --font-arabic: "Cairo", "Plus Jakarta Sans", system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    font-family: var(--font-sans);
+  }
+
+  [dir="rtl"] {
+    font-family: var(--font-arabic);
+  }
+
+  [dir="rtl"] h1,
+  [dir="rtl"] h2,
+  [dir="rtl"] h3,
+  [dir="rtl"] .font-display {
+    font-family: var(--font-arabic);
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: var(--font-display);
+  }
+}
+
+@keyframes gentle-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes gentle-shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-6px);
+  }
+  75% {
+    transform: translateX(6px);
+  }
+}
+
+@keyframes mastery-shimmer {
+  0% {
+    transform: translateX(-120%) skewX(-18deg);
+  }
+  100% {
+    transform: translateX(220%) skewX(-18deg);
+  }
+}
+
+@keyframes sun-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes eq-bar {
+  0%, 100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes fennec-bob {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-3.5px);
+  }
+}
+
+@keyframes fennec-leg-a {
+  0%, 100% {
+    transform: rotate(-18deg);
+  }
+  50% {
+    transform: rotate(18deg);
+  }
+}
+
+@keyframes fennec-leg-b {
+  0%, 100% {
+    transform: rotate(18deg);
+  }
+  50% {
+    transform: rotate(-18deg);
+  }
+}
+
+@keyframes fennec-tail {
+  0%, 100% {
+    transform: rotate(-8deg);
+  }
+  50% {
+    transform: rotate(12deg);
+  }
+}
+
+@keyframes fennec-blink {
+  0%, 92%, 100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes horus-wing {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-16deg);
+  }
+}
+
+.animate-gentle-float {
+  animation: gentle-float 3.2s ease-in-out infinite;
+}
+
+.animate-pop-in {
+  animation: pop-in 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-gentle-shake {
+  animation: gentle-shake 220ms ease-in-out;
+}
+
+.animate-mastery-shimmer {
+  animation: mastery-shimmer 2.8s ease-in-out infinite;
+}
+
+.animate-sun-spin {
+  animation: sun-spin 18s linear infinite;
+}
+
+.animate-eq-bar {
+  transform-origin: bottom;
+  animation: eq-bar 0.9s ease-in-out infinite;
+}
+
+.animate-fennec-bob {
+  animation: fennec-bob 0.36s ease-in-out infinite;
+}
+
+.animate-fennec-leg-a {
+  transform-box: fill-box;
+  transform-origin: top center;
+  animation: fennec-leg-a 0.36s ease-in-out infinite;
+}
+
+.animate-fennec-leg-b {
+  transform-box: fill-box;
+  transform-origin: top center;
+  animation: fennec-leg-b 0.36s ease-in-out infinite;
+}
+
+.animate-fennec-tail {
+  transform-box: fill-box;
+  transform-origin: bottom right;
+  animation: fennec-tail 0.75s ease-in-out infinite;
+}
+
+.animate-fennec-blink {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: fennec-blink 4.2s ease-in-out infinite;
+}
+
+.animate-horus-wing {
+  transform-box: fill-box;
+  transform-origin: top right;
+  animation: horus-wing 0.42s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-gentle-float,
+  .animate-pop-in,
+  .animate-gentle-shake,
+  .animate-mastery-shimmer,
+  .animate-sun-spin,
+  .animate-eq-bar,
+  .animate-fennec-bob,
+  .animate-fennec-leg-a,
+  .animate-fennec-leg-b,
+  .animate-fennec-tail,
+  .animate-fennec-blink,
+  .animate-horus-wing {
+    animation: none !important;
+  }
+}

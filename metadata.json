@@ -1,0 +1,8 @@
+{
+  "name": "Number 2",
+  "description": "Now make this game in a sub menu to be a game section , and make another section \" Practice\" to help understand all the subjects in the game, this section should have a menu by subject\n",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
