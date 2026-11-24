@@ -1,8 +1,15 @@
 import React, { useState } from 'react';
-import { BookOpen, Lock, Shuffle, Star } from 'lucide-react';
+import { BookOpen, CheckCircle2, Lock, Shuffle, Star, Trophy } from 'lucide-react';
 import { EGYPT_LEVELS, EGYPT_SUBJECTS, WORLD_NAMES } from '../data/egyptLevels';
 import { t, UI_TEXT } from '../data/i18n';
 import { LevelConfig, PlayerProgress, SubjectId, WorldId } from '../types/game';
+import {
+  getLevelRecentAccuracy,
+  getSubjectMasteryStats,
+  isLevelCompleted,
+  isLevelMastered,
+  isLevelUnlockedForPlayer,
+} from '../utils/scoring';
 import { SubjectIcon } from './PracticeMenuScreen';
 import { SectionNavHeader } from './SectionNavHeader';
 
@@ -35,12 +42,6 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
   const [selectedWorld, setSelectedWorld] = useState<WorldId | 'all'>('all');
 
   const totalMaxStars = EGYPT_LEVELS.length * 3;
-
-  const isLevelUnlocked = (level: LevelConfig): boolean => {
-    if (level.levelNumber <= 2) return true;
-    const prevId = `${level.subjectId}-${level.levelNumber - 1}`;
-    return (progress.starsByLevel[prevId] ?? 0) > 0;
-  };
 
   const visibleSubjects =
     selectedWorld === 'all'
@@ -88,6 +89,9 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
             </h1>
             <p className="mt-1.5 text-sm sm:text-base font-medium text-[#475569]">
               {t(UI_TEXT.gameSectionSub, lang)}
+            </p>
+            <p className="mt-1 text-xs font-semibold text-[#64748B]">
+              {t(UI_TEXT.masteryRuleNote, lang)}
             </p>
           </div>
 
@@ -150,20 +154,18 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
           })}
         </div>
 
-        {/* 12 Separated Subject Cards × 5 Progressive Levels */}
-        <div className="w-full grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-stretch pb-8">
+        {/* 12 Separated Subject Cards × 5 Progressive Levels (extra bottom clearance for enlarged walking guide) */}
+        <div className="w-full grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 items-stretch pb-36">
           {visibleSubjects.map((subject) => {
             const subjectLevels = EGYPT_LEVELS.filter((l) => l.subjectId === subject.id);
-            const subjectStars = subjectLevels.reduce(
-              (sum, lvl) => sum + (progress.starsByLevel[lvl.id] ?? 0),
-              0
-            );
-            const subjectMaxStars = subjectLevels.length * 3;
+            const stats = getSubjectMasteryStats(subject.id, EGYPT_LEVELS, progress);
 
             return (
               <section
                 key={subject.id}
-                className="bg-white border-2 border-[#133C3B] rounded-3xl p-4 sm:p-5 shadow-sm flex flex-col gap-3.5"
+                className={`bg-white border-2 rounded-3xl p-4 sm:p-5 shadow-sm flex flex-col gap-3.5 ${
+                  stats.isMastered ? 'border-[#D97706]' : 'border-[#133C3B]'
+                }`}
               >
                 {/* Subject Header */}
                 <div className="flex items-start justify-between gap-3">
@@ -194,18 +196,37 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 text-xs font-bold text-[#133C3B] tabular-nums shrink-0 pt-0.5">
-                    <Star className="w-3.5 h-3.5 text-[#F59E0B] fill-[#F59E0B]" />
-                    <span>
-                      {subjectStars}/{subjectMaxStars}
-                    </span>
+                  <div className="flex flex-col items-end gap-0.5 shrink-0 pt-0.5">
+                    <div className="flex items-center gap-1 text-xs font-bold text-[#133C3B] tabular-nums">
+                      <Star className="w-3.5 h-3.5 text-[#F59E0B] fill-[#F59E0B]" />
+                      <span>
+                        {stats.earnedStars}/{stats.maxStars}
+                      </span>
+                    </div>
+                    {stats.isMastered ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#B45309] tabular-nums">
+                        <Trophy className="w-3 h-3 text-[#D97706]" />
+                        {t(UI_TEXT.masteredLabel, lang)}
+                        {stats.recentAccuracyPct !== null ? ` · ${stats.recentAccuracyPct}%` : ''}
+                      </span>
+                    ) : stats.isCompleted ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-[#0F766E] tabular-nums">
+                        <CheckCircle2 className="w-3 h-3" />
+                        {t(UI_TEXT.completedLabel, lang)}
+                        {stats.recentAccuracyPct !== null ? ` · ${stats.recentAccuracyPct}%` : ''}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
 
                 {/* 5-Level Ladder (L1 & L2 Unlocked by Default, L3-L5 Unlock Progressively) */}
                 <div className="flex-1 flex flex-col gap-2">
                   {subjectLevels.map((lvl) => {
-                    const unlocked = isLevelUnlocked(lvl);
+                    const unlocked = isLevelUnlockedForPlayer(lvl, progress);
+                    const completed = isLevelCompleted(lvl.id, progress);
+                    const mastered = isLevelMastered(lvl.id, progress);
+                    const recentAcc = getLevelRecentAccuracy(lvl.id, progress);
+                    const recentAccPct = recentAcc !== null ? Math.round(recentAcc * 100) : null;
                     const stars = progress.starsByLevel[lvl.id] ?? 0;
 
                     return (
@@ -259,16 +280,39 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
                                 {t(lvl.title, lang)}
                               </span>
                             </div>
-                            <div className="text-[11px] font-semibold text-[#64748B] truncate">
+                            <div className="text-[11px] font-semibold text-[#64748B] truncate tabular-nums">
                               {unlocked ? (
                                 <>
                                   <span style={{ color: subject.accentColor }}>
                                     {t(lvl.difficultyLabel, lang)}
                                   </span>
-                                  <span className="mx-1 text-[#94A3B8]" aria-hidden="true">
-                                    ·
-                                  </span>
-                                  <span>{t(lvl.conceptSummary, lang)}</span>
+                                  {completed && (
+                                    <>
+                                      <span className="mx-1 text-[#94A3B8]" aria-hidden="true">
+                                        ·
+                                      </span>
+                                      <span
+                                        className={
+                                          mastered
+                                            ? 'text-[#B45309] font-bold'
+                                            : 'text-[#0F766E] font-bold'
+                                        }
+                                      >
+                                        {mastered
+                                          ? t(UI_TEXT.masteredLabel, lang)
+                                          : t(UI_TEXT.completedLabel, lang)}
+                                        {recentAccPct !== null ? ` ${recentAccPct}%` : ''}
+                                      </span>
+                                    </>
+                                  )}
+                                  {!completed && (
+                                    <>
+                                      <span className="mx-1 text-[#94A3B8]" aria-hidden="true">
+                                        ·
+                                      </span>
+                                      <span>{t(lvl.conceptSummary, lang)}</span>
+                                    </>
+                                  )}
                                 </>
                               ) : (
                                 `${t(UI_TEXT.finishPrevToUnlock, lang)} ${lvl.levelNumber - 1} ${t(
@@ -312,7 +356,7 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
                   </button>
 
                   <span className="text-[11px] font-bold text-[#64748B] tabular-nums whitespace-nowrap">
-                    5 {lang === 'ar' ? 'مستويات' : 'Levels'} · 6 {lang === 'ar' ? 'أسئلة' : 'Qs'}
+                    {stats.completedLevels}/5 {t(UI_TEXT.completedLabel, lang)}
                   </span>
                 </div>
               </section>

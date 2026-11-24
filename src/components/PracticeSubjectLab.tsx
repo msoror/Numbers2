@@ -132,7 +132,7 @@ export const PracticeSubjectLab: React.FC<PracticeSubjectLabProps> = ({
       </div>
 
       {/* Main Two-Zone Educational Sandbox Layout */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-5 py-6 flex flex-col gap-6">
+      <main className="flex-1 w-full max-w-7xl mx-auto px-5 pt-6 pb-36 flex flex-col gap-6">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[#133C3B]/12">
           <div>
             <div className="flex items-center gap-2 text-xs font-bold text-[#64748B]">

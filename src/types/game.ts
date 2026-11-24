@@ -85,12 +85,44 @@ export interface LevelConfig {
   stickerId: StickerId;
 }
 
+export interface LevelAttemptRecord {
+  firstTry: number;
+  total: number;
+  timestamp: number;
+}
+
+export type CosmeticCategory = 'sticker' | 'outfit' | 'accessory' | 'trail';
+
+export interface EquippedCosmetics {
+  outfitId: string | null;
+  accessoryId: string | null;
+  trailId: string | null;
+}
+
+export interface ShopItem {
+  id: string;
+  category: CosmeticCategory;
+  name: BilingualText;
+  description: BilingualText;
+  price: number;
+  accentColor: string;
+  surfaceTint: string;
+}
+
+export interface RoundAdvancePayload {
+  correctFirstTry: boolean;
+}
+
 export interface PlayerProgress {
   language: Language;
   starsByLevel: Record<string, number>;
+  recentAttemptsByLevel: Record<string, LevelAttemptRecord[]>;
+  mistakeCountsBySkill: Record<string, number>;
   unlockedStickers: StickerId[];
   practicedSubjects: SubjectId[];
   celebratedMasteredSubjects: SubjectId[];
+  purchasedCosmetics: string[];
+  equippedCosmetics: EquippedCosmetics;
   totalStars: number;
   totalGems: number;
   bestStreak: number;

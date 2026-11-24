@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Languages, Music, Pause, Volume2, VolumeX } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Languages, Lightbulb, Music, Pause, Volume2, VolumeX } from 'lucide-react';
 import { BazaarMiniGame } from './components/BazaarMiniGame';
 import { ClockMiniGame } from './components/ClockMiniGame';
 import { PauseModal, RoundSummaryModal } from './components/GameModals';
@@ -15,6 +15,8 @@ import {
   EGYPT_LEVELS,
   EGYPT_SUBJECTS,
   generateSubjectQuestions,
+  generateTargetedQuestions,
+  getQuestionSkillKey,
 } from './data/egyptLevels';
 import { t, UI_TEXT } from './data/i18n';
 import {
@@ -23,10 +25,26 @@ import {
   LevelConfig,
   PlayerProgress,
   PracticeSubjectId,
+  RoundAdvancePayload,
   RoundResult,
+  ShopItem,
   SubjectId,
   WorldId,
 } from './types/game';
+import {
+  advanceRoundSession,
+  appendLevelAttempt,
+  computeRoundRewards,
+  createDefaultProgress,
+  createRoundSession,
+  getLevelRecentAccuracy,
+  getNextContinueLevel,
+  isLevelMastered,
+  migrateProgress,
+  recordRoundAttempt,
+  REPEATED_MISTAKE_THRESHOLD,
+  RoundSessionState,
+} from './utils/scoring';
 import { soundEngine } from './utils/sound';
 
 const STORAGE_KEY = 'nile_numbers_p2_progress_v1';
@@ -34,61 +52,14 @@ const STORAGE_KEY = 'nile_numbers_p2_progress_v1';
 const VALID_SUBJECT_IDS = new Set<string>(EGYPT_SUBJECTS.map((s) => s.id));
 const VALID_LEVEL_IDS = new Set<string>(EGYPT_LEVELS.map((l) => l.id));
 
-const DEFAULT_PROGRESS: PlayerProgress = {
-  language: 'en',
-  starsByLevel: {},
-  unlockedStickers: [],
-  practicedSubjects: [],
-  celebratedMasteredSubjects: [],
-  totalStars: 0,
-  totalGems: 0,
-  bestStreak: 0,
-  muted: false,
-  musicEnabled: true,
-};
-
 function loadProgress(): PlayerProgress {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_PROGRESS;
-    const parsed = JSON.parse(raw) as Partial<PlayerProgress>;
-
-    const rawStars = parsed.starsByLevel ?? {};
-    const sanitizedStars: Record<string, number> = {};
-    let totalStars = 0;
-    for (const [lvlId, stars] of Object.entries(rawStars)) {
-      if (VALID_LEVEL_IDS.has(lvlId) && typeof stars === 'number' && stars > 0) {
-        const clamped = Math.min(3, Math.max(0, Math.floor(stars)));
-        sanitizedStars[lvlId] = clamped;
-        totalStars += clamped;
-      }
-    }
-
-    const sanitizedPracticed: SubjectId[] = Array.isArray(parsed.practicedSubjects)
-      ? parsed.practicedSubjects.filter((id): id is SubjectId =>
-          VALID_SUBJECT_IDS.has(String(id))
-        )
-      : [];
-
-    const sanitizedCelebrated: SubjectId[] = Array.isArray(parsed.celebratedMasteredSubjects)
-      ? parsed.celebratedMasteredSubjects.filter((id): id is SubjectId =>
-          VALID_SUBJECT_IDS.has(String(id))
-        )
-      : [];
-
-    return {
-      ...DEFAULT_PROGRESS,
-      ...parsed,
-      language: parsed.language === 'ar' ? 'ar' : 'en',
-      starsByLevel: sanitizedStars,
-      totalStars,
-      unlockedStickers: Array.isArray(parsed.unlockedStickers) ? parsed.unlockedStickers : [],
-      practicedSubjects: sanitizedPracticed,
-      celebratedMasteredSubjects: sanitizedCelebrated,
-      musicEnabled: typeof parsed.musicEnabled === 'boolean' ? parsed.musicEnabled : true,
-    };
+    if (!raw) return createDefaultProgress();
+    const parsed = JSON.parse(raw) as unknown;
+    return migrateProgress(parsed, VALID_LEVEL_IDS, VALID_SUBJECT_IDS);
   } catch {
-    return DEFAULT_PROGRESS;
+    return createDefaultProgress();
   }
 }
 
@@ -102,18 +73,29 @@ export default function App() {
 
   const [activeLevel, setActiveLevel] = useState<LevelConfig>(EGYPT_LEVELS[0]);
   const [activeQuestions, setActiveQuestions] = useState<ActiveQuestion[]>([]);
+  const [isTargetedRound, setIsTargetedRound] = useState(false);
+  const [targetedSkillKey, setTargetedSkillKey] = useState<string | null>(null);
+  const [repeatedMistakeSkill, setRepeatedMistakeSkill] = useState<string | null>(null);
 
-  const [roundIndex, setRoundIndex] = useState(0);
-  const [missedCurrentRound, setMissedCurrentRound] = useState(false);
-  const [firstTryCount, setFirstTryCount] = useState(0);
-  const [streak, setStreak] = useState(0);
+  const [roundSession, setRoundSession] = useState<RoundSessionState>(() =>
+    createRoundSession(6, 0)
+  );
+  const roundSessionRef = useRef<RoundSessionState>(roundSession);
+
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null);
   const [lastAttemptFeedback, setLastAttemptFeedback] = useState<{
     isCorrect: boolean;
     seq: number;
   } | null>(null);
+  const [mobileGuideOpen, setMobileGuideOpen] = useState(false);
 
   const lang = progress.language;
+  const isPaused = screen === 'PAUSED';
+
+  const continueLevel = useMemo(
+    () => getNextContinueLevel(EGYPT_LEVELS, progress),
+    [progress]
+  );
 
   useEffect(() => {
     soundEngine.setMuted(progress.muted);
@@ -156,7 +138,6 @@ export default function App() {
 
   const toggleMusic = useCallback(() => {
     setProgress((prev) => {
-      // If currently muted and user clicks Lofi Music, unmute and enable music smoothly
       if (prev.muted) {
         soundEngine.setMuted(false);
         soundEngine.setMusicEnabled(true);
@@ -192,24 +173,65 @@ export default function App() {
     });
   }, []);
 
+  const handlePurchaseCosmetic = useCallback((item: ShopItem) => {
+    setProgress((prev) => {
+      if (prev.purchasedCosmetics.includes(item.id) || prev.totalGems < item.price) {
+        return prev;
+      }
+      const nextPurchased = [...prev.purchasedCosmetics, item.id];
+      const nextEquipped = { ...prev.equippedCosmetics };
+      if (item.category === 'outfit') nextEquipped.outfitId = item.id;
+      if (item.category === 'accessory') nextEquipped.accessoryId = item.id;
+      if (item.category === 'trail') nextEquipped.trailId = item.id;
+
+      return {
+        ...prev,
+        totalGems: prev.totalGems - item.price,
+        purchasedCosmetics: nextPurchased,
+        equippedCosmetics: nextEquipped,
+      };
+    });
+    soundEngine.playStickerUnlock();
+  }, []);
+
+  const handleToggleEquipCosmetic = useCallback((item: ShopItem) => {
+    soundEngine.playClick();
+    setProgress((prev) => {
+      if (!prev.purchasedCosmetics.includes(item.id)) return prev;
+      const nextEquipped = { ...prev.equippedCosmetics };
+      if (item.category === 'outfit') {
+        nextEquipped.outfitId = nextEquipped.outfitId === item.id ? null : item.id;
+      } else if (item.category === 'accessory') {
+        nextEquipped.accessoryId = nextEquipped.accessoryId === item.id ? null : item.id;
+      } else if (item.category === 'trail') {
+        nextEquipped.trailId = nextEquipped.trailId === item.id ? null : item.id;
+      }
+      return { ...prev, equippedCosmetics: nextEquipped };
+    });
+  }, []);
+
   const openHome = useCallback(() => {
     soundEngine.playClick();
+    setMobileGuideOpen(false);
     setScreen('TITLE_MENU');
   }, []);
 
   const openGameMenu = useCallback(() => {
     soundEngine.playClick();
+    setMobileGuideOpen(false);
     setScreen('MAP_SELECT');
   }, []);
 
   const openPracticeMenu = useCallback((filter: WorldId | 'all' = 'all') => {
     soundEngine.playClick();
+    setMobileGuideOpen(false);
     setPracticeFilter(filter);
     setScreen('PRACTICE_MENU');
   }, []);
 
   const openPracticeSubject = useCallback((subjectId: PracticeSubjectId) => {
     soundEngine.playClick();
+    setMobileGuideOpen(false);
     setActivePracticeSubject(subjectId);
     setProgress((prev) => {
       if (prev.practicedSubjects.includes(subjectId)) return prev;
@@ -223,114 +245,220 @@ export default function App() {
 
   const openStickers = useCallback(() => {
     soundEngine.playClick();
+    setMobileGuideOpen(false);
     setScreen('STICKER_BOOK');
   }, []);
 
-  const startLevel = useCallback((level: LevelConfig) => {
-    soundEngine.playClick();
-    setActiveLevel(level);
-    setRoundIndex(0);
-    setMissedCurrentRound(false);
-    setFirstTryCount(0);
-    setStreak(0);
-    setRoundResult(null);
-    setLastAttemptFeedback(null);
+  const startLevel = useCallback(
+    (level: LevelConfig) => {
+      soundEngine.playClick();
+      setActiveLevel(level);
+      setIsTargetedRound(false);
+      setTargetedSkillKey(null);
+      setRepeatedMistakeSkill(null);
+      setRoundResult(null);
+      setLastAttemptFeedback(null);
+      setMobileGuideOpen(false);
 
-    // Auto-generate brand-new randomized exam numbers on every level start / replay / restart
-    const freshQuestions = generateSubjectQuestions(
-      level.subjectId,
-      level.levelNumber,
-      level.roundsCount
-    );
-    setActiveQuestions(freshQuestions);
+      const initialSession = createRoundSession(level.roundsCount, progress.bestStreak);
+      roundSessionRef.current = initialSession;
+      setRoundSession(initialSession);
 
-    setScreen('PLAYING');
-  }, []);
+      const freshQuestions = generateSubjectQuestions(
+        level.subjectId,
+        level.levelNumber,
+        level.roundsCount
+      );
+      setActiveQuestions(freshQuestions);
+
+      setScreen('PLAYING');
+    },
+    [progress.bestStreak]
+  );
+
+  const startTargetedPractice = useCallback(
+    (level: LevelConfig, skillKey: string) => {
+      soundEngine.playClick();
+      setActiveLevel(level);
+      setIsTargetedRound(true);
+      setTargetedSkillKey(skillKey);
+      setRepeatedMistakeSkill(null);
+      setRoundResult(null);
+      setLastAttemptFeedback(null);
+      setMobileGuideOpen(false);
+
+      const focusedQuestions = generateTargetedQuestions(
+        level.subjectId,
+        level.levelNumber,
+        skillKey,
+        3
+      );
+      const initialSession = createRoundSession(focusedQuestions.length, progress.bestStreak);
+      roundSessionRef.current = initialSession;
+      setRoundSession(initialSession);
+      setActiveQuestions(focusedQuestions);
+
+      setScreen('PLAYING');
+    },
+    [progress.bestStreak]
+  );
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (screen === 'PLAYING') {
-          soundEngine.playClick();
-          setScreen('PAUSED');
-        } else if (screen === 'PAUSED') {
-          soundEngine.playClick();
-          setScreen('PLAYING');
-        }
+      if (e.key === 'Escape' && screen === 'PLAYING') {
+        soundEngine.playClick();
+        setMobileGuideOpen(false);
+        setScreen('PAUSED');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [screen]);
 
+  const currentQuestion = activeQuestions[roundSession.roundIndex];
+
   const handleAttempt = useCallback(
     (isCorrect: boolean) => {
+      if (isPaused) return;
+      const skillKey = currentQuestion ? getQuestionSkillKey(currentQuestion) : undefined;
+      const nextSession = recordRoundAttempt(roundSessionRef.current, isCorrect, skillKey);
+      roundSessionRef.current = nextSession;
+      setRoundSession(nextSession);
+
       setLastAttemptFeedback((prev) => ({ isCorrect, seq: (prev?.seq ?? 0) + 1 }));
+
       if (isCorrect) {
-        if (!missedCurrentRound) {
-          setFirstTryCount((c) => c + 1);
-          setStreak((s) => s + 1);
-        } else {
-          setStreak(1);
-        }
-      } else {
-        setMissedCurrentRound(true);
-        setStreak(0);
+        // Update bestStreak after EVERY answer, not only at round end
+        setProgress((prev) =>
+          nextSession.bestStreak > prev.bestStreak
+            ? { ...prev, bestStreak: nextSession.bestStreak }
+            : prev
+        );
+      } else if (skillKey) {
+        setProgress((prev) => {
+          const nextCount = (prev.mistakeCountsBySkill[skillKey] ?? 0) + 1;
+          return {
+            ...prev,
+            mistakeCountsBySkill: {
+              ...prev.mistakeCountsBySkill,
+              [skillKey]: nextCount,
+            },
+          };
+        });
       }
     },
-    [missedCurrentRound]
+    [currentQuestion, isPaused]
   );
 
-  const handleAdvanceRound = useCallback(() => {
-    const nextIdx = roundIndex + 1;
-    if (nextIdx < activeLevel.roundsCount) {
-      setRoundIndex(nextIdx);
-      setMissedCurrentRound(false);
-      return;
-    }
+  const handleAdvanceRound = useCallback(
+    (payload: RoundAdvancePayload) => {
+      if (isPaused) return;
+      const nextSession = advanceRoundSession(roundSessionRef.current, payload);
+      roundSessionRef.current = nextSession;
+      setRoundSession(nextSession);
 
-    const starsEarned: 1 | 2 | 3 =
-      firstTryCount >= 5 ? 3 : firstTryCount >= 3 ? 2 : 1;
-    const gemsEarned = firstTryCount * 5 + starsEarned * 10;
+      if (!nextSession.finished) {
+        return;
+      }
 
-    const alreadyHasSticker = progress.unlockedStickers.includes(activeLevel.stickerId);
-    setRoundResult({
-      levelId: activeLevel.id,
-      correctFirstTry: firstTryCount,
-      totalRounds: activeLevel.roundsCount,
-      starsEarned,
-      gemsEarned,
-      newlyUnlockedSticker: alreadyHasSticker ? null : activeLevel.stickerId,
-    });
+      const rewards = computeRoundRewards(nextSession);
 
-    setProgress((prev) => {
-      const prevBest = prev.starsByLevel[activeLevel.id] ?? 0;
-      const updatedStars = {
-        ...prev.starsByLevel,
-        [activeLevel.id]: Math.max(prevBest, starsEarned),
-      };
-      const totalStars = EGYPT_LEVELS.reduce(
-        (sum, lvl) => sum + (updatedStars[lvl.id] ?? 0),
-        0
-      );
-      const hasSticker = prev.unlockedStickers.includes(activeLevel.stickerId);
-      const updatedStickers = hasSticker
-        ? prev.unlockedStickers
-        : [...prev.unlockedStickers, activeLevel.stickerId];
+      // Detect repeated mistake type during this round or cumulative across recent attempts
+      let detectedRepeatSkill: string | null = null;
+      if (!isTargetedRound && nextSession.mistakeSkills.length > 0) {
+        const countsInRound: Record<string, number> = {};
+        for (const sk of nextSession.mistakeSkills) {
+          countsInRound[sk] = (countsInRound[sk] ?? 0) + 1;
+          if (countsInRound[sk] >= REPEATED_MISTAKE_THRESHOLD) {
+            detectedRepeatSkill = sk;
+            break;
+          }
+        }
+        if (!detectedRepeatSkill) {
+          for (const sk of nextSession.mistakeSkills) {
+            if ((progress.mistakeCountsBySkill[sk] ?? 0) >= REPEATED_MISTAKE_THRESHOLD) {
+              detectedRepeatSkill = sk;
+              break;
+            }
+          }
+        }
+      }
+      setRepeatedMistakeSkill(detectedRepeatSkill);
 
-      return {
-        ...prev,
-        starsByLevel: updatedStars,
-        unlockedStickers: updatedStickers,
-        totalStars,
-        totalGems: prev.totalGems + gemsEarned,
-        bestStreak: Math.max(prev.bestStreak, streak),
-      };
-    });
+      const alreadyHasSticker =
+        isTargetedRound || progress.unlockedStickers.includes(activeLevel.stickerId);
 
-    soundEngine.playStickerUnlock();
-    setScreen('ROUND_SUMMARY');
-  }, [activeLevel, firstTryCount, progress.unlockedStickers, roundIndex, streak]);
+      setRoundResult({
+        levelId: activeLevel.id,
+        correctFirstTry: rewards.correctFirstTry,
+        totalRounds: rewards.totalRounds,
+        starsEarned: rewards.starsEarned,
+        gemsEarned: rewards.gemsEarned,
+        newlyUnlockedSticker: alreadyHasSticker ? null : activeLevel.stickerId,
+      });
+
+      setProgress((prev) => {
+        const nextMistakeCounts = { ...prev.mistakeCountsBySkill };
+        if (isTargetedRound && targetedSkillKey) {
+          delete nextMistakeCounts[targetedSkillKey];
+        }
+
+        if (isTargetedRound) {
+          return {
+            ...prev,
+            totalGems: prev.totalGems + rewards.gemsEarned,
+            bestStreak: Math.max(prev.bestStreak, rewards.bestStreak),
+            mistakeCountsBySkill: nextMistakeCounts,
+          };
+        }
+
+        const prevBest = prev.starsByLevel[activeLevel.id] ?? 0;
+        const updatedStars = {
+          ...prev.starsByLevel,
+          [activeLevel.id]: Math.max(prevBest, rewards.starsEarned),
+        };
+        const totalStars = EGYPT_LEVELS.reduce(
+          (sum, lvl) => sum + (updatedStars[lvl.id] ?? 0),
+          0
+        );
+        const hasSticker = prev.unlockedStickers.includes(activeLevel.stickerId);
+        const updatedStickers = hasSticker
+          ? prev.unlockedStickers
+          : [...prev.unlockedStickers, activeLevel.stickerId];
+
+        const updatedAttempts = {
+          ...prev.recentAttemptsByLevel,
+          [activeLevel.id]: appendLevelAttempt(
+            prev.recentAttemptsByLevel[activeLevel.id],
+            rewards.correctFirstTry,
+            rewards.totalRounds
+          ),
+        };
+
+        return {
+          ...prev,
+          starsByLevel: updatedStars,
+          recentAttemptsByLevel: updatedAttempts,
+          mistakeCountsBySkill: nextMistakeCounts,
+          unlockedStickers: updatedStickers,
+          totalStars,
+          totalGems: prev.totalGems + rewards.gemsEarned,
+          bestStreak: Math.max(prev.bestStreak, rewards.bestStreak),
+        };
+      });
+
+      soundEngine.playStickerUnlock();
+      setScreen('ROUND_SUMMARY');
+    },
+    [
+      activeLevel,
+      isPaused,
+      isTargetedRound,
+      progress.mistakeCountsBySkill,
+      progress.unlockedStickers,
+      targetedSkillKey,
+    ]
+  );
 
   const currentLevelIndex = EGYPT_LEVELS.findIndex((l) => l.id === activeLevel.id);
   const nextLevel =
@@ -338,14 +466,18 @@ export default function App() {
       ? EGYPT_LEVELS[currentLevelIndex + 1]
       : null;
 
-  const currentQuestion = activeQuestions[roundIndex];
   const isMusicPlaying = progress.musicEnabled && !progress.muted;
+  const levelRecentAcc = getLevelRecentAccuracy(activeLevel.id, progress);
+  const levelRecentAccPct = levelRecentAcc !== null ? Math.round(levelRecentAcc * 100) : null;
+  const levelMasteredNow = isLevelMastered(activeLevel.id, progress);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#FCF9F0]">
       {screen === 'TITLE_MENU' && (
         <TitleScreen
           progress={progress}
+          continueLevel={continueLevel}
+          onContinueLearning={startLevel}
           onStart={openGameMenu}
           onOpenPractice={() => openPracticeMenu('all')}
           onOpenStickers={openStickers}
@@ -403,6 +535,8 @@ export default function App() {
       {screen === 'STICKER_BOOK' && (
         <StickerBookScreen
           progress={progress}
+          onPurchaseCosmetic={handlePurchaseCosmetic}
+          onToggleEquipCosmetic={handleToggleEquipCosmetic}
           onNavigateHome={openHome}
           onNavigateGame={openGameMenu}
           onNavigatePractice={() => openPracticeMenu('all')}
@@ -414,142 +548,189 @@ export default function App() {
 
       {(screen === 'PLAYING' || screen === 'PAUSED' || screen === 'ROUND_SUMMARY') && (
         <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="relative w-full h-full">
-          {/* Unobtrusive Top Perimeter HUD */}
-          <div className="pointer-events-none fixed top-0 left-0 right-0 z-30 px-4 pt-3 flex items-center justify-between gap-3">
-            <div className="pointer-events-auto flex items-center gap-2.5 min-w-0">
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.playClick();
-                  setScreen('PAUSED');
-                }}
-                aria-label="Pause game"
-                className="h-10 px-3.5 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] font-bold text-sm flex items-center gap-1.5 shadow-sm hover:bg-[#FEF3C7] transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <Pause className="w-4 h-4" />
-                <span>{t(UI_TEXT.pause, lang)}</span>
-              </button>
+          {/* Background gameplay stage is inert & non-interactive while Paused */}
+          <div
+            aria-hidden={isPaused || screen === 'ROUND_SUMMARY'}
+            className={`w-full h-full ${
+              isPaused || screen === 'ROUND_SUMMARY' ? 'pointer-events-none select-none' : ''
+            }`}
+          >
+            {/* Responsive Phone & Desktop Top Perimeter HUD */}
+            <div className="pointer-events-none fixed top-0 left-0 right-0 z-30 px-3 sm:px-4 pt-2.5 sm:pt-3 flex items-center justify-between gap-2">
+              <div className="pointer-events-auto flex items-center gap-2 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setMobileGuideOpen(false);
+                    setScreen('PAUSED');
+                  }}
+                  aria-label={t(UI_TEXT.pause, lang)}
+                  className="h-10 px-2.5 sm:px-3.5 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-sm hover:bg-[#FEF3C7] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <Pause className="w-4 h-4 shrink-0" />
+                  <span className="hidden sm:inline">{t(UI_TEXT.pause, lang)}</span>
+                </button>
 
-              <div className="bg-[#FFFDF7]/95 border-2 border-[#133C3B]/30 rounded-xl px-3.5 py-1.5 text-xs sm:text-sm font-bold text-[#133C3B] tabular-nums shadow-xs truncate">
-                <span>{t(activeLevel.subjectName, lang)}</span>
-                <span className="mx-1.5 text-[#64748B]" aria-hidden="true">
-                  ·
-                </span>
-                <span>
-                  {t(UI_TEXT.levelShort, lang)}
-                  {activeLevel.levelNumber}
-                </span>
-                <span className="mx-1.5 text-[#64748B]" aria-hidden="true">
-                  ·
-                </span>
-                <span>
-                  {t(UI_TEXT.round, lang)} {roundIndex + 1}/{activeLevel.roundsCount}
-                </span>
-              </div>
-            </div>
-
-            <div className="pointer-events-auto flex items-center gap-2 shrink-0">
-              <div className="hidden md:flex items-center gap-2 bg-[#FFFDF7]/95 border-2 border-[#133C3B]/30 rounded-xl px-3.5 py-1.5 text-sm font-bold text-[#133C3B] tabular-nums shadow-xs">
-                <span>
-                  {t(UI_TEXT.streak, lang)} {streak}
-                </span>
-                <span className="text-[#64748B]" aria-hidden="true">
-                  ·
-                </span>
-                <span>
-                  {t(UI_TEXT.gems, lang)} {progress.totalGems}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={toggleLanguage}
-                aria-label="Toggle language"
-                className="h-10 px-3 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] font-bold text-xs flex items-center gap-1 shadow-sm hover:bg-[#E0F2FE] transition-colors cursor-pointer whitespace-nowrap shrink-0"
-              >
-                <Languages className="w-4 h-4 text-[#0D9488]" />
-                <span>{lang === 'en' ? 'عربي' : 'EN'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={toggleMusic}
-                aria-pressed={isMusicPlaying}
-                aria-label={isMusicPlaying ? t(UI_TEXT.lofiMusicOn, lang) : t(UI_TEXT.lofiMusicOff, lang)}
-                title={isMusicPlaying ? t(UI_TEXT.lofiMusicOn, lang) : t(UI_TEXT.lofiMusicOff, lang)}
-                className={`h-10 px-2.5 rounded-xl border-2 border-[#133C3B] font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  isMusicPlaying
-                    ? 'bg-[#FEF3C7] text-[#92400E]'
-                    : 'bg-[#FFFDF7] text-[#64748B] hover:text-[#133C3B]'
-                }`}
-              >
-                <Music className="w-4 h-4 shrink-0" />
-                {isMusicPlaying && (
-                  <span className="inline-flex items-end gap-[2px] h-3" aria-hidden="true">
-                    <span className="w-[2.5px] h-3 rounded-full bg-[#D97706] animate-eq-bar" />
-                    <span
-                      className="w-[2.5px] h-2 rounded-full bg-[#D97706] animate-eq-bar"
-                      style={{ animationDelay: '0.25s' }}
-                    />
-                    <span
-                      className="w-[2.5px] h-3 rounded-full bg-[#D97706] animate-eq-bar"
-                      style={{ animationDelay: '0.5s' }}
-                    />
+                {/* Non-truncating Question X/Y indicator (compact on 390px phone, full context on >= md) */}
+                <div className="bg-[#FFFDF7]/95 border-2 border-[#133C3B]/30 rounded-xl px-3 py-1.5 text-xs sm:text-sm font-bold text-[#133C3B] tabular-nums shadow-xs flex items-center gap-1.5 min-w-0">
+                  <span className="hidden md:inline truncate">
+                    {isTargetedRound
+                      ? t(UI_TEXT.targetedRoundTitle, lang)
+                      : t(activeLevel.subjectName, lang)}
                   </span>
-                )}
-              </button>
+                  {!isTargetedRound && (
+                    <>
+                      <span className="hidden md:inline text-[#64748B]" aria-hidden="true">
+                        ·
+                      </span>
+                      <span className="hidden md:inline whitespace-nowrap shrink-0">
+                        {t(UI_TEXT.levelShort, lang)}
+                        {activeLevel.levelNumber}
+                      </span>
+                    </>
+                  )}
+                  <span className="hidden md:inline text-[#64748B]" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="whitespace-nowrap shrink-0">
+                    {t(UI_TEXT.questionLabel, lang)} {roundSession.roundIndex + 1}/
+                    {roundSession.totalRounds}
+                  </span>
+                </div>
+              </div>
 
-              <button
-                type="button"
-                onClick={toggleMute}
-                aria-label={progress.muted ? 'Unmute sound' : 'Mute sound'}
-                className="w-10 h-10 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] flex items-center justify-center shadow-sm hover:bg-[#FEF3C7] transition-colors cursor-pointer"
-              >
-                {progress.muted ? (
-                  <VolumeX className="w-4 h-4" />
-                ) : (
-                  <Volume2 className="w-4 h-4" />
-                )}
-              </button>
+              <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+                <div className="hidden lg:flex items-center gap-2 bg-[#FFFDF7]/95 border-2 border-[#133C3B]/30 rounded-xl px-3.5 py-1.5 text-sm font-bold text-[#133C3B] tabular-nums shadow-xs whitespace-nowrap">
+                  <span>
+                    {t(UI_TEXT.streak, lang)} {roundSession.streak}
+                  </span>
+                  <span className="text-[#64748B]" aria-hidden="true">
+                    ·
+                  </span>
+                  <span>
+                    {t(UI_TEXT.gems, lang)} {progress.totalGems}
+                  </span>
+                </div>
+
+                {/* Mobile-only compact Guide button (opens top coaching drawer away from answers) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setMobileGuideOpen((open) => !open);
+                  }}
+                  aria-expanded={mobileGuideOpen}
+                  aria-label={t(UI_TEXT.guideButton, lang)}
+                  className={`md:hidden h-10 px-2.5 rounded-xl border-2 border-[#133C3B] font-bold text-xs flex items-center gap-1 shadow-sm cursor-pointer whitespace-nowrap shrink-0 ${
+                    mobileGuideOpen
+                      ? 'bg-[#FEF3C7] text-[#92400E]'
+                      : 'bg-[#FFFDF7] text-[#133C3B]'
+                  }`}
+                >
+                  <Lightbulb className="w-4 h-4 text-[#D97706] shrink-0" />
+                  <span>{t(UI_TEXT.guideButton, lang)}</span>
+                </button>
+
+                {/* Desktop-only Language & Lofi Music buttons (accessible inside Pause menu on < md phones) */}
+                <button
+                  type="button"
+                  onClick={toggleLanguage}
+                  aria-label="Toggle language"
+                  className="hidden md:flex h-10 px-3 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] font-bold text-xs items-center gap-1 shadow-sm hover:bg-[#E0F2FE] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                >
+                  <Languages className="w-4 h-4 text-[#0D9488]" />
+                  <span>{lang === 'en' ? 'عربي' : 'EN'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleMusic}
+                  aria-pressed={isMusicPlaying}
+                  aria-label={
+                    isMusicPlaying ? t(UI_TEXT.lofiMusicOn, lang) : t(UI_TEXT.lofiMusicOff, lang)
+                  }
+                  title={
+                    isMusicPlaying ? t(UI_TEXT.lofiMusicOn, lang) : t(UI_TEXT.lofiMusicOff, lang)
+                  }
+                  className={`hidden md:flex h-10 px-2.5 rounded-xl border-2 border-[#133C3B] font-bold text-xs items-center gap-1.5 shadow-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    isMusicPlaying
+                      ? 'bg-[#FEF3C7] text-[#92400E]'
+                      : 'bg-[#FFFDF7] text-[#64748B] hover:text-[#133C3B]'
+                  }`}
+                >
+                  <Music className="w-4 h-4 shrink-0" />
+                  {isMusicPlaying && (
+                    <span className="inline-flex items-end gap-[2px] h-3" aria-hidden="true">
+                      <span className="w-[2.5px] h-3 rounded-full bg-[#D97706] animate-eq-bar" />
+                      <span
+                        className="w-[2.5px] h-2 rounded-full bg-[#D97706] animate-eq-bar"
+                        style={{ animationDelay: '0.25s' }}
+                      />
+                      <span
+                        className="w-[2.5px] h-3 rounded-full bg-[#D97706] animate-eq-bar"
+                        style={{ animationDelay: '0.5s' }}
+                      />
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  aria-label={progress.muted ? 'Unmute sound' : 'Mute sound'}
+                  className="w-10 h-10 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] flex items-center justify-center shadow-sm hover:bg-[#FEF3C7] transition-colors cursor-pointer shrink-0"
+                >
+                  {progress.muted ? (
+                    <VolumeX className="w-4 h-4" />
+                  ) : (
+                    <Volume2 className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
             </div>
+
+            {/* Active Mini-Game Stage */}
+            {currentQuestion?.stage === 'bazaar' && (
+              <BazaarMiniGame
+                question={currentQuestion.data}
+                lang={lang}
+                isPaused={isPaused}
+                onAttempt={handleAttempt}
+                onAdvance={handleAdvanceRound}
+              />
+            )}
+
+            {currentQuestion?.stage === 'nile' && (
+              <NileMiniGame
+                question={currentQuestion.data}
+                lang={lang}
+                isPaused={isPaused}
+                onAttempt={handleAttempt}
+                onAdvance={handleAdvanceRound}
+              />
+            )}
+
+            {currentQuestion?.stage === 'clock' && (
+              <ClockMiniGame
+                question={currentQuestion.data}
+                lang={lang}
+                isPaused={isPaused}
+                onAttempt={handleAttempt}
+                onAdvance={handleAdvanceRound}
+              />
+            )}
+
+            {currentQuestion?.stage === 'workshop' && (
+              <WorkshopMeasureMiniGame
+                question={currentQuestion.data}
+                lang={lang}
+                isPaused={isPaused}
+                onAttempt={handleAttempt}
+                onAdvance={handleAdvanceRound}
+              />
+            )}
           </div>
-
-          {/* Active Mini-Game Stage */}
-          {currentQuestion?.stage === 'bazaar' && (
-            <BazaarMiniGame
-              question={currentQuestion.data}
-              lang={lang}
-              onAttempt={handleAttempt}
-              onAdvance={handleAdvanceRound}
-            />
-          )}
-
-          {currentQuestion?.stage === 'nile' && (
-            <NileMiniGame
-              question={currentQuestion.data}
-              lang={lang}
-              onAttempt={handleAttempt}
-              onAdvance={handleAdvanceRound}
-            />
-          )}
-
-          {currentQuestion?.stage === 'clock' && (
-            <ClockMiniGame
-              question={currentQuestion.data}
-              lang={lang}
-              onAttempt={handleAttempt}
-              onAdvance={handleAdvanceRound}
-            />
-          )}
-
-          {currentQuestion?.stage === 'workshop' && (
-            <WorkshopMeasureMiniGame
-              question={currentQuestion.data}
-              lang={lang}
-              onAttempt={handleAttempt}
-              onAdvance={handleAdvanceRound}
-            />
-          )}
 
           {/* Pause Overlay */}
           {screen === 'PAUSED' && (
@@ -562,7 +743,11 @@ export default function App() {
                 soundEngine.playClick();
                 setScreen('PLAYING');
               }}
-              onRestart={() => startLevel(activeLevel)}
+              onRestart={() =>
+                isTargetedRound && targetedSkillKey
+                  ? startTargetedPractice(activeLevel, targetedSkillKey)
+                  : startLevel(activeLevel)
+              }
               onExitToMap={openGameMenu}
               onToggleMute={toggleMute}
               onToggleMusic={toggleMusic}
@@ -570,24 +755,37 @@ export default function App() {
             />
           )}
 
-          {/* Victory Modal */}
+          {/* Victory / Round Summary Modal */}
           {screen === 'ROUND_SUMMARY' && roundResult && (
             <RoundSummaryModal
               level={activeLevel}
               lang={lang}
               result={roundResult}
-              hasNextLevel={nextLevel !== null}
+              hasNextLevel={!isTargetedRound && nextLevel !== null}
+              isTargetedRound={isTargetedRound}
+              levelRecentAccuracyPct={levelRecentAccPct}
+              isLevelMasteredNow={levelMasteredNow}
+              repeatedMistakeSkill={repeatedMistakeSkill}
+              onStartTargetedPractice={
+                repeatedMistakeSkill
+                  ? () => startTargetedPractice(activeLevel, repeatedMistakeSkill)
+                  : undefined
+              }
               onNextLevel={() => {
                 if (nextLevel) startLevel(nextLevel);
               }}
-              onPlayAgain={() => startLevel(activeLevel)}
+              onPlayAgain={() =>
+                isTargetedRound && targetedSkillKey
+                  ? startTargetedPractice(activeLevel, targetedSkillKey)
+                  : startLevel(activeLevel)
+              }
               onExitToMap={openGameMenu}
             />
           )}
         </div>
       )}
 
-      {/* Theme-Linked Animated Walking Guides (Sobek Nile Crocodile & Horus Falcon) */}
+      {/* Theme-Linked Animated Walking Guides (Bigger Sobek & Horus + Cosmetics + Non-Overlapping Mobile Guide) */}
       <WalkingCompanion
         screen={screen}
         lang={lang}
@@ -595,9 +793,12 @@ export default function App() {
         activeLevel={activeLevel}
         activePracticeSubject={activePracticeSubject}
         currentQuestion={currentQuestion}
-        roundIndex={roundIndex}
-        streak={streak}
+        roundIndex={roundSession.roundIndex}
+        streak={roundSession.streak}
         lastAttemptFeedback={lastAttemptFeedback}
+        isPaused={isPaused}
+        mobileGuideOpen={mobileGuideOpen}
+        onMobileGuideOpenChange={setMobileGuideOpen}
       />
     </div>
   );

@@ -24,6 +24,7 @@ import { EGYPT_LEVELS, EGYPT_SUBJECTS } from '../data/egyptLevels';
 import { PRACTICE_SUBJECTS, PracticeSubjectInfo } from '../data/practiceSubjects';
 import { t, UI_TEXT } from '../data/i18n';
 import { BilingualText, PlayerProgress, SubjectId, WorldId } from '../types/game';
+import { getSubjectMasteryStats, SubjectMasteryStats } from '../utils/scoring';
 import { soundEngine } from '../utils/sound';
 import { EgyptStickerSvg } from './EgyptSvgs';
 import { SectionNavHeader } from './SectionNavHeader';
@@ -137,34 +138,16 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
 
   const confettiPieces = useMemo(() => buildConfettiBurst(), []);
 
-  // Compute completion status across all 5 levels per subject
+  // Compute completion vs mastery (mastery requires all 5 levels completed AND >= 80% recent accuracy)
   const subjectStats = useMemo(() => {
-    const map: Record<
-      SubjectId,
-      { completedLevels: number; earnedStars: number; isMastered: boolean; starsPerLevel: number[] }
-    > = {} as Record<
-      SubjectId,
-      { completedLevels: number; earnedStars: number; isMastered: boolean; starsPerLevel: number[] }
-    >;
-
+    const map = {} as Record<SubjectId, SubjectMasteryStats>;
     for (const subj of PRACTICE_SUBJECTS) {
-      const levels = EGYPT_LEVELS.filter((l) => l.subjectId === subj.id).sort(
-        (a, b) => a.levelNumber - b.levelNumber
-      );
-      const starsPerLevel = levels.map((lvl) => progress.starsByLevel[lvl.id] ?? 0);
-      const completedLevels = starsPerLevel.filter((s) => s > 0).length;
-      const earnedStars = starsPerLevel.reduce((acc, s) => acc + s, 0);
-      map[subj.id] = {
-        completedLevels,
-        earnedStars,
-        isMastered: levels.length === 5 && completedLevels === 5,
-        starsPerLevel,
-      };
+      map[subj.id] = getSubjectMasteryStats(subj.id, EGYPT_LEVELS, progress);
     }
     return map;
-  }, [progress.starsByLevel]);
+  }, [progress]);
 
-  // Automatically trigger the celebratory animation for any newly mastered subject (all 5 levels done)
+  // Trigger celebratory animation ONLY when a subject truly achieves Mastery (>=80% recent accuracy across all 5 levels)
   useEffect(() => {
     if (celebratingSubjectId) return;
     const newlyMastered = PRACTICE_SUBJECTS.find(
@@ -214,6 +197,7 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
       : PRACTICE_SUBJECTS.filter((subj) => subj.worldId === filter);
 
   const exploredCount = progress.practicedSubjects.length;
+  const completedCount = PRACTICE_SUBJECTS.filter((s) => subjectStats[s.id]?.isCompleted).length;
   const masteredCount = PRACTICE_SUBJECTS.filter((s) => subjectStats[s.id]?.isMastered).length;
 
   const celebratingSubject = celebratingSubjectId
@@ -258,6 +242,9 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
             <p className="mt-1.5 text-sm sm:text-base font-medium text-[#475569]">
               {t(UI_TEXT.practiceSectionSub, lang)}
             </p>
+            <p className="mt-1 text-xs font-semibold text-[#64748B]">
+              {t(UI_TEXT.masteryRuleNote, lang)}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 text-sm font-bold text-[#133C3B] tabular-nums shrink-0">
@@ -265,6 +252,15 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
               {t(UI_TEXT.subjectsExplored, lang)}{' '}
               <span className="text-[#0F766E]">
                 {exploredCount}/{PRACTICE_SUBJECTS.length}
+              </span>
+            </span>
+            <span className="text-[#94A3B8]" aria-hidden="true">
+              ·
+            </span>
+            <span className="inline-flex items-center gap-1 text-[#0F766E]">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>
+                {t(UI_TEXT.completedLabel, lang)} {completedCount}/{PRACTICE_SUBJECTS.length}
               </span>
             </span>
             <span className="text-[#94A3B8]" aria-hidden="true">
@@ -305,10 +301,11 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
           })}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 pb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 pb-36">
           {visibleSubjects.map((subj) => {
             const isExplored = progress.practicedSubjects.includes(subj.id);
             const stat = subjectStats[subj.id];
+            const isCompleted = stat?.isCompleted ?? false;
             const isMastered = stat?.isMastered ?? false;
             const isSpotlighted = celebratingSubjectId === subj.id;
 
@@ -326,10 +323,12 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
                 } ${
                   isMastered
                     ? 'bg-gradient-to-b from-[#FFFBEB] to-white border-2 border-[#D97706] shadow-sm'
+                    : isCompleted
+                    ? 'bg-gradient-to-b from-[#F0FDFA] to-white border-2 border-[#0D9488] shadow-xs'
                     : 'bg-white border border-[#133C3B]/20 hover:border-[#133C3B]'
                 }`}
               >
-                {/* Delicate Golden Mastery Shimmer Sweep */}
+                {/* Delicate Golden Mastery Shimmer Sweep (Mastered only) */}
                 {isMastered && (
                   <div
                     aria-hidden="true"
@@ -352,12 +351,17 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
                       <SubjectIcon id={subj.id} color={subj.accentColor} />
                     </div>
                     <div className="flex items-center gap-1.5">
-                      {isMastered && (
+                      {isMastered ? (
                         <Trophy
                           className="w-4 h-4 text-[#D97706] shrink-0"
                           aria-label={t(UI_TEXT.masteredLabel, lang)}
                         />
-                      )}
+                      ) : isCompleted ? (
+                        <CheckCircle2
+                          className="w-4 h-4 text-[#0D9488] shrink-0"
+                          aria-label={t(UI_TEXT.completedLabel, lang)}
+                        />
+                      ) : null}
                       <span className="font-display text-sm font-bold text-[#94A3B8] tabular-nums">
                         {subj.order}.
                       </span>
@@ -372,14 +376,21 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
                     {isMastered ? (
                       <span className="inline-flex items-center gap-1 text-[#B45309] font-bold tabular-nums">
                         <Sparkles className="w-3.5 h-3.5 text-[#D97706]" />
-                        {t(UI_TEXT.masteredLabel, lang)} 5/5
+                        {t(UI_TEXT.masteredLabel, lang)}
+                        {stat?.recentAccuracyPct !== null ? ` ${stat.recentAccuracyPct}%` : ''}
+                      </span>
+                    ) : isCompleted ? (
+                      <span className="inline-flex items-center gap-1 text-[#0F766E] font-bold tabular-nums">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {t(UI_TEXT.completedLabel, lang)} 5/5
+                        {stat?.recentAccuracyPct !== null ? ` · ${stat.recentAccuracyPct}%` : ''}
                       </span>
                     ) : (
                       <span className="tabular-nums">
                         {stat?.completedLevels ?? 0}/5 {t(UI_TEXT.levelsDone, lang)}
                       </span>
                     )}
-                    {isExplored && !isMastered && (
+                    {isExplored && !isMastered && !isCompleted && (
                       <>
                         <span aria-hidden="true">·</span>
                         <span className="inline-flex items-center gap-1 text-[#0F766E] font-bold">
@@ -433,7 +444,7 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
         </div>
       </main>
 
-      {/* Celebratory Subject Mastery Overlay (Triggers when all 5 levels for a subject are complete) */}
+      {/* Celebratory Subject Mastery Overlay (Triggers ONLY when all 5 levels are complete with >= 80% recent accuracy) */}
       <AnimatePresence>
         {celebratingSubject && celebratingConfig && celebratingStats && (
           <motion.div
@@ -548,7 +559,12 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
               <div>
                 <div className="text-xs font-bold text-[#D97706] flex items-center justify-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>{t(UI_TEXT.allFiveComplete, lang)}</span>
+                  <span>
+                    {t(UI_TEXT.allFiveComplete, lang)}
+                    {celebratingStats.recentAccuracyPct !== null
+                      ? ` · ${celebratingStats.recentAccuracyPct}%`
+                      : ''}
+                  </span>
                 </div>
                 <h2
                   id="mastery-celebration-title"

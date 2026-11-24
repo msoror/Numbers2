@@ -741,7 +741,7 @@ function genVerticalMath(level: LevelNumber, count: number): NileQuestion[] {
       }
       needsRegroup = true;
     } else {
-      // Level 5: 3-digit DOUBLE regrouping (ones + tens)
+      // Level 5: 3-digit DOUBLE regrouping (ones + tens) including borrowing across zero
       if (op === '+') {
         const o1 = randInt(5, 9);
         const o2 = randInt(10 - o1, 9);
@@ -752,10 +752,11 @@ function genVerticalMath(level: LevelNumber, count: number): NileQuestion[] {
         top = h1 * 100 + t1 * 10 + o1;
         bottom = h2 * 100 + t2 * 10 + o2;
       } else {
+        const borrowAcrossZero = i % 3 === 1;
         const o1 = randInt(0, 4);
         const o2 = randInt(o1 + 2, 9);
-        const t1 = randInt(1, 4);
-        const t2 = randInt(t1 + 1, 8);
+        const t1 = borrowAcrossZero ? 0 : randInt(1, 4);
+        const t2 = borrowAcrossZero ? randInt(2, 8) : randInt(t1 + 1, 8);
         const h1 = randInt(5, 9);
         const h2 = randInt(1, h1 - 2);
         top = h1 * 100 + t1 * 10 + o1;
@@ -1748,4 +1749,31 @@ export function generateSubjectQuestions(
     case 'graphs':
       return genGraphs(levelNumber, count).map((data) => ({ stage: 'workshop', data }));
   }
+}
+
+export function getQuestionSkillKey(question: ActiveQuestion): string {
+  const { data } = question;
+  if (data.kind === 'money_change_or_compare') return `${data.kind}:${data.subKind}`;
+  if (data.kind === 'fraction_or_shape') return `${data.kind}:${data.subKind}`;
+  if (data.kind === 'vertical_math') {
+    return `vertical_math:${data.operator === '+' ? 'add' : 'sub'}${data.needsRegroup ? '_regroup' : ''}`;
+  }
+  return data.kind;
+}
+
+/**
+ * Generates a short targeted practice round (default 3 questions) focused on the exact
+ * skill type where the learner repeated a mistake.
+ */
+export function generateTargetedQuestions(
+  subjectId: SubjectId,
+  levelNumber: LevelNumber,
+  skillKey: string,
+  count = 3
+): ActiveQuestion[] {
+  const pool = generateSubjectQuestions(subjectId, levelNumber, Math.max(10, count * 3));
+  const matched = pool.filter((q) => getQuestionSkillKey(q) === skillKey);
+  if (matched.length >= count) return matched.slice(0, count);
+  const rest = pool.filter((q) => getQuestionSkillKey(q) !== skillKey);
+  return [...matched, ...rest].slice(0, count);
 }
