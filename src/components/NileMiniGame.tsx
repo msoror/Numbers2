@@ -3,8 +3,10 @@ import { AlertCircle, ArrowRight, ChevronLeft, ChevronRight, Lightbulb } from 'l
 import { t, UI_TEXT } from '../data/i18n';
 import { usePausableTimer } from '../hooks/usePausableTimer';
 import { BilingualText, Language, NileQuestion, RoundAdvancePayload } from '../types/game';
+import egyptNileBg from '../assets/images/egypt_nile_bg.webp';
 import { computeRegroupingPlan } from '../utils/regrouping';
 import { soundEngine } from '../utils/sound';
+import { ReadAloudButton } from './ReadAloudButton';
 
 interface NileMiniGameProps {
   question: NileQuestion;
@@ -144,9 +146,8 @@ export const NileMiniGame: React.FC<NileMiniGameProps> = ({
         aria-hidden="true"
       >
         <img
-          src="/src/assets/images/egypt_nile_bg_1794872911846.jpg"
-          alt="Sunny Nile River with date palms"
-          referrerPolicy="no-referrer"
+          src={egyptNileBg}
+          alt=""
           className="w-full h-full object-cover opacity-90"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-white/20 via-transparent to-black/20" />
@@ -154,17 +155,26 @@ export const NileMiniGame: React.FC<NileMiniGameProps> = ({
 
       {/* Zone 1: Top Prompt Card */}
       <div className="relative z-10 pt-16 sm:pt-17 px-3 sm:px-4 flex justify-center shrink-0">
-        <div className="bg-[#FFFDF7] border-2 border-[#133C3B] rounded-2xl px-4 sm:px-6 py-2.5 sm:py-3 shadow-md text-center max-w-2xl w-full">
-          <h2 className="font-display text-lg sm:text-2xl font-bold text-[#133C3B] leading-snug">
+        <div className="bg-[#FFFDF7] border-2 border-[#133C3B] rounded-2xl px-3.5 sm:px-6 py-2.5 sm:py-3 shadow-md max-w-2xl w-full flex items-center justify-between gap-2.5">
+          <h2 className="font-display text-lg sm:text-2xl font-bold text-[#133C3B] leading-snug text-center flex-1">
             {t(question.prompt, lang)}
           </h2>
+          <ReadAloudButton text={t(question.prompt, lang)} lang={lang} disabled={isPaused} compact />
         </div>
       </div>
 
       {/* Zone 2: Scroll-Safe Visual Model Stage */}
       <div className="relative z-10 flex-1 min-h-0 overflow-y-auto flex items-center justify-center px-3 sm:px-4 py-2">
         {question.kind === 'vertical_math' && regroupPlan ? (
-          <div className="bg-[#FFFDF7]/96 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-6 shadow-xl flex flex-col items-center gap-3 w-full max-w-md">
+          <div
+            role="group"
+            aria-label={
+              lang === 'ar'
+                ? `مسألة رأسية: ${question.top} ${question.operator === '+' ? 'زائد' : 'ناقص'} ${question.bottom}`
+                : `Vertical problem: ${question.top} ${question.operator === '+' ? 'plus' : 'minus'} ${question.bottom}`
+            }
+            className="bg-[#FFFDF7]/96 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-6 shadow-xl flex flex-col items-center gap-3 w-full max-w-md"
+          >
             {/* Strict LTR Vertical Place-Value Columns */}
             <div dir="ltr" className="grid grid-cols-4 gap-2 text-center items-center tabular-nums">
               {/* Column Headers */}
@@ -358,7 +368,15 @@ export const NileMiniGame: React.FC<NileMiniGameProps> = ({
         ) : (
           /* Date Palm Array Builder */
           question.kind === 'array_multiply' && (
-            <div className="bg-[#FFFDF7]/95 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-6 shadow-xl flex flex-col items-center gap-3">
+            <div
+              role="group"
+              aria-label={
+                lang === 'ar'
+                  ? `مصفوفة من ${question.rows} صفوف، في كل صف ${question.cols} تمرات`
+                  : `Array of ${question.rows} rows with ${question.cols} dates in each row`
+              }
+              className="bg-[#FFFDF7]/95 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-6 shadow-xl flex flex-col items-center gap-3"
+            >
               <div dir="ltr" className="font-display text-xl sm:text-2xl font-bold text-[#133C3B] tabular-nums">
                 {question.rows} × {question.cols} = {solved ? question.answer : '?'}
               </div>

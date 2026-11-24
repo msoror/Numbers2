@@ -20,6 +20,7 @@ interface WorldMapScreenProps {
   onOpenPractice: (worldFilter?: WorldId | 'all') => void;
   onPracticeSubject: (subjectId: SubjectId) => void;
   onOpenStickers: () => void;
+  onOpenLevelCheck: () => void;
   onToggleMute: () => void;
   onToggleMusic: () => void;
   onToggleLang: () => void;
@@ -34,6 +35,7 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
   onOpenPractice,
   onPracticeSubject,
   onOpenStickers,
+  onOpenLevelCheck,
   onToggleMute,
   onToggleMusic,
   onToggleLang,
@@ -61,6 +63,7 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
         onNavigateHome={onBackToTitle}
         onNavigateGame={() => {}}
         onNavigatePractice={() => onOpenPractice('all')}
+        onNavigateExam={onOpenLevelCheck}
         onNavigateStickers={onOpenStickers}
         onToggleLang={onToggleLang}
         onToggleMute={onToggleMute}
@@ -117,7 +120,7 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
         {/* Theme Filter Tabs */}
         <div
           role="tablist"
-          aria-label="Filter game subjects"
+          aria-label={lang === 'ar' ? 'تصفية مواد اللعبة' : 'Filter game subjects'}
           className="flex flex-wrap items-center gap-1.5 p-1.5 bg-[#F1EDE1] rounded-2xl w-fit"
         >
           <button
@@ -326,7 +329,9 @@ export const WorldMapScreen: React.FC<WorldMapScreenProps> = ({
 
                         <div
                           className="flex items-center gap-0.5 shrink-0"
-                          aria-label={`${stars} of 3 stars`}
+                          aria-label={
+                            lang === 'ar' ? `${stars} من 3 نجوم` : `${stars} of 3 stars`
+                          }
                         >
                           {[1, 2, 3].map((n) => (
                             <Star

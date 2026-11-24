@@ -1,5 +1,6 @@
 import { BilingualText, SubjectId, WorldId } from '../types/game';
-import { buildNumberOptions, pickOne, randInt, shuffle } from './egyptLevels';
+import { buildNumberOptions, nextRandom, pickOne, randInt, shuffle } from './egyptLevels';
+import { getCombinedSeenSignatures, recordSeenQuestionSignatures } from '../utils/questionHistory';
 
 export interface PracticeCheckItem {
   id: string;
@@ -405,11 +406,23 @@ const WEEKDAYS_QC: BilingualText[] = [
 ];
 
 export function generatePracticeQuickCheck(subjectId: SubjectId): PracticeCheckItem {
-  const qid = `qc-${subjectId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const seen = getCombinedSeenSignatures();
+  let chosen = generatePracticeQuickCheckOnce(subjectId);
+  let tries = 0;
+  while (seen.has(`qc:${subjectId}:${chosen.prompt.en}`) && tries < 30) {
+    chosen = generatePracticeQuickCheckOnce(subjectId);
+    tries++;
+  }
+  recordSeenQuestionSignatures([`qc:${subjectId}:${chosen.prompt.en}`]);
+  return chosen;
+}
+
+function generatePracticeQuickCheckOnce(subjectId: SubjectId): PracticeCheckItem {
+  const qid = `qc-${subjectId}-${Date.now().toString(36)}-${Math.floor(nextRandom() * 1e6).toString(36)}`;
 
   switch (subjectId) {
     case 'place_value': {
-      if (Math.random() < 0.55) {
+      if (nextRandom() < 0.55) {
         const h = randInt(1, 9);
         let t = randInt(1, 9);
         while (t === h) t = randInt(1, 9);
@@ -465,7 +478,7 @@ export function generatePracticeQuickCheck(subjectId: SubjectId): PracticeCheckI
     }
 
     case 'money': {
-      if (Math.random() < 0.5) {
+      if (nextRandom() < 0.5) {
         const n1 = pickOne([50, 100]);
         const n2 = pickOne([10, 20]);
         const n3 = pickOne([1, 5]);
@@ -507,7 +520,7 @@ export function generatePracticeQuickCheck(subjectId: SubjectId): PracticeCheckI
     }
 
     case 'vertical_math': {
-      const isAdd = Math.random() < 0.5;
+      const isAdd = nextRandom() < 0.5;
       if (isAdd) {
         const o1 = randInt(5, 9);
         const o2 = randInt(10 - o1, 9);
@@ -737,7 +750,7 @@ export function generatePracticeQuickCheck(subjectId: SubjectId): PracticeCheckI
       const mango = randInt(4, 9);
       const dates = randInt(2, 8);
       const figs = randInt(2, 7);
-      if (Math.random() < 0.5) {
+      if (nextRandom() < 0.5) {
         const total = mango + dates + figs;
         const shuf = shuffle([total, total - 2, total + 3]);
         return {

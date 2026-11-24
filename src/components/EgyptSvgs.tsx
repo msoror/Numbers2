@@ -108,8 +108,21 @@ export const EgyptianBanknoteSvg: React.FC<{
   const w = compact ? 88 : 112;
   const h = compact ? 48 : 58;
 
+  const noteAria =
+    lang === 'ar'
+      ? `ورقة نقدية بقيمة ${denomination} جنيه مصري`
+      : `${denomination} Egyptian pound banknote`;
+
   return (
-    <svg width={w} height={h} viewBox="0 0 112 58" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg
+      width={w}
+      height={h}
+      viewBox="0 0 112 58"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={noteAria}
+    >
       <rect x="2" y="2" width="108" height="54" rx="8" fill={pal.bg} stroke="#133C3B" strokeWidth="2.5" />
       <rect x="7" y="7" width="98" height="44" rx="5" stroke={pal.accent} strokeWidth="1.5" strokeDasharray="3 3" />
       <circle cx="56" cy="29" r="15" fill="#FFFDF7" stroke={pal.accent} strokeWidth="2" />
@@ -155,12 +168,31 @@ export const AnalogClockSvg: React.FC<{
   minute: number;
   size?: number;
   showMinuteTicks?: boolean;
-}> = ({ hour, minute, size = 220, showMinuteTicks = true }) => {
+  lang?: Language;
+  hideExactTime?: boolean;
+}> = ({ hour, minute, size = 220, showMinuteTicks = true, lang = 'en', hideExactTime = false }) => {
   const minuteAngle = minute * 6;
   const hourAngle = ((hour % 12) + minute / 60) * 30;
+  const minuteMark = minute === 0 ? 12 : Math.round(minute / 5);
+  const padM = minute < 10 ? `0${minute}` : `${minute}`;
+  const clockAria = hideExactTime
+    ? lang === 'ar'
+      ? `ساعة بعقارب: العقرب الأحمر القصير عند ${hour} والعقرب الأخضر الطويل عند الرقم ${minuteMark}`
+      : `Analog clock: short red hour hand near ${hour} and long teal minute hand pointing to ${minuteMark}`
+    : lang === 'ar'
+    ? `ساعة بعقارب تشير إلى ${hour}:${padM}`
+    : `Analog clock showing ${hour}:${padM}`;
 
   return (
-    <svg width={size} height={size} viewBox="0 0 220 220" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 220 220"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={clockAria}
+    >
       {/* Sandstone & Gold Bezel */}
       <circle cx="110" cy="110" r="102" fill="#F59E0B" stroke="#133C3B" strokeWidth="4" />
       <circle cx="110" cy="110" r="90" fill="#FFFDF7" stroke="#133C3B" strokeWidth="3" />
@@ -228,7 +260,8 @@ export const FractionCircleSvg: React.FC<{
   totalParts: number;
   shadedParts: number;
   size?: number;
-}> = ({ totalParts, shadedParts, size = 148 }) => {
+  lang?: Language;
+}> = ({ totalParts, shadedParts, size = 148, lang = 'en' }) => {
   const cx = 74;
   const cy = 74;
   const r = 62;
@@ -257,18 +290,71 @@ export const FractionCircleSvg: React.FC<{
     );
   });
 
+  const fracAria =
+    lang === 'ar'
+      ? `دائرة مقسمة إلى ${totalParts} أجزاء متساوية، منها ${shadedParts} مظللة`
+      : `Circle divided into ${totalParts} equal parts with ${shadedParts} shaded`;
+
   return (
-    <svg width={size} height={size} viewBox="0 0 148 148" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 148 148"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={fracAria}
+    >
       {slices}
     </svg>
   );
+};
+
+const SHAPE_DESCRIPTIONS: Record<
+  ShapeKind,
+  { named: { en: string; ar: string }; geometryOnly: { en: string; ar: string } }
+> = {
+  triangle: {
+    named: { en: 'Triangle with 3 sides and 3 corners', ar: 'مثلث له ٣ أضلاع و ٣ رؤوس' },
+    geometryOnly: { en: 'Flat 2D shape with 3 straight sides and 3 corners', ar: 'شكل هندسي مسطح له ٣ أضلاع مستقيمة و ٣ رؤوس' },
+  },
+  square: {
+    named: { en: 'Square with 4 equal sides and 4 corners', ar: 'مربع له ٤ أضلاع متساوية و ٤ رؤوس' },
+    geometryOnly: { en: 'Flat 2D shape with 4 equal straight sides and 4 corners', ar: 'شكل هندسي مسطح له ٤ أضلاع متساوية و ٤ رؤوس' },
+  },
+  rectangle: {
+    named: { en: 'Rectangle with 4 sides and 4 corners', ar: 'مستطيل له ٤ أضلاع و ٤ رؤوس' },
+    geometryOnly: { en: 'Flat 2D shape with 2 long sides, 2 short sides, and 4 corners', ar: 'شكل هندسي مسطح له ضلعان طويلان وضلعان قصيران و ٤ رؤوس' },
+  },
+  pentagon: {
+    named: { en: 'Pentagon with 5 sides and 5 corners', ar: 'شكل خماسي له ٥ أضلاع و ٥ رؤوس' },
+    geometryOnly: { en: 'Flat 2D shape with 5 straight sides and 5 corners', ar: 'شكل هندسي مسطح له ٥ أضلاع مستقيمة و ٥ رؤوس' },
+  },
+  hexagon: {
+    named: { en: 'Hexagon with 6 sides and 6 corners', ar: 'شكل سداسي له ٦ أضلاع و ٦ رؤوس' },
+    geometryOnly: { en: 'Flat 2D shape with 6 straight sides and 6 corners', ar: 'شكل هندسي مسطح له ٦ أضلاع مستقيمة و ٦ رؤوس' },
+  },
+  cube: {
+    named: { en: '3D Cube with 6 square faces and 8 vertices', ar: 'مكعب ثلاثي الأبعاد له ٦ أوجه مربعة و ٨ رؤوس' },
+    geometryOnly: { en: '3D solid box with 6 equal flat square faces and 8 corners', ar: 'مجسم ثلاثي الأبعاد له ٦ أوجه مربعة مستوية و ٨ رؤوس' },
+  },
+  cylinder: {
+    named: { en: '3D Cylinder with 2 flat circular faces', ar: 'أسطوانة ثلاثية الأبعاد لها وجهان دائريان مستويان' },
+    geometryOnly: { en: '3D solid with 2 flat circular faces and a curved side', ar: 'مجسم ثلاثي الأبعاد له وجهان دائريان مستويان وجانب منحني' },
+  },
+  pyramid: {
+    named: { en: '3D Pyramid with 5 faces and 5 vertices', ar: 'هرم ثلاثي الأبعاد له ٥ أوجه و ٥ رؤوس' },
+    geometryOnly: { en: '3D solid with a flat base and triangular faces meeting at a top point', ar: 'مجسم ثلاثي الأبعاد له قاعدة مستوية وأوجه مثلثة تلتقي عند قمة واحدة' },
+  },
 };
 
 export const EgyptShapeSvg: React.FC<{
   shape: ShapeKind;
   size?: number;
   showVertices?: boolean;
-}> = ({ shape, size = 120, showVertices = false }) => {
+  lang?: Language;
+  hideName?: boolean;
+}> = ({ shape, size = 120, showVertices = false, lang = 'en', hideName = false }) => {
   const vertices: Partial<Record<ShapeKind, [number, number][]>> = {
     triangle: [[60, 18], [102, 96], [18, 96]],
     square: [[24, 24], [96, 24], [96, 96], [24, 96]],
@@ -277,8 +363,20 @@ export const EgyptShapeSvg: React.FC<{
     hexagon: [[60, 14], [100, 37], [100, 83], [60, 106], [20, 83], [20, 37]],
   };
 
+  const shapeAria = hideName
+    ? SHAPE_DESCRIPTIONS[shape].geometryOnly[lang]
+    : SHAPE_DESCRIPTIONS[shape].named[lang];
+
   return (
-    <svg width={size} height={size} viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 120 120"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={shapeAria}
+    >
       {shape === 'triangle' && (
         <polygon points="60,18 102,96 18,96" fill="#F59E0B" stroke="#133C3B" strokeWidth="3.5" strokeLinejoin="round" />
       )}

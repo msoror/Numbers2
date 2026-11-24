@@ -13,7 +13,8 @@ export type GameScreenState =
   | 'ROUND_SUMMARY'
   | 'STICKER_BOOK'
   | 'PRACTICE_MENU'
-  | 'PRACTICE_SUBJECT';
+  | 'PRACTICE_SUBJECT'
+  | 'PLACEMENT_EXAM';
 
 export type WorldId = 'bazaar' | 'nile' | 'clock' | 'workshop';
 
@@ -113,6 +114,45 @@ export interface RoundAdvancePayload {
   correctFirstTry: boolean;
 }
 
+export type PlacementTier = 'needs_support' | 'developing' | 'strong';
+
+export interface PlacementSubjectResult {
+  subjectId: SubjectId;
+  correct: number;
+  total: number;
+  accuracy: number; // 0..1
+  avgResponseMs: number;
+  tier: PlacementTier;
+  recommendedStartLevel: LevelNumber;
+}
+
+export interface PlacementExamResult {
+  id: string;
+  completedAt: string; // ISO date string
+  totalCorrect: number;
+  totalQuestions: number;
+  overallAccuracy: number; // 0..1
+  overallLevel: BilingualText;
+  avgResponseMs: number;
+  subjects: PlacementSubjectResult[];
+  topStrengths: SubjectId[];
+  topAreasToPractice: SubjectId[];
+}
+
+export interface ActiveLevelSessionSnapshot {
+  levelId: string;
+  questions: ActiveQuestion[];
+  roundIndex: number;
+  totalRounds: number;
+  missedCurrentRound: boolean;
+  resolvedCurrentRound: boolean;
+  firstTryCount: number;
+  streak: number;
+  bestStreak: number;
+  mistakeSkills: string[];
+  savedAt: number;
+}
+
 export interface PlayerProgress {
   language: Language;
   starsByLevel: Record<string, number>;
@@ -123,6 +163,9 @@ export interface PlayerProgress {
   celebratedMasteredSubjects: SubjectId[];
   purchasedCosmetics: string[];
   equippedCosmetics: EquippedCosmetics;
+  placementHistory: PlacementExamResult[];
+  recommendedUnlockedLevels: Partial<Record<SubjectId, LevelNumber>>;
+  hasDismissedPlacementPrompt: boolean;
   totalStars: number;
   totalGems: number;
   bestStreak: number;

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowRight,
@@ -23,6 +23,7 @@ import {
 import { EGYPT_LEVELS, EGYPT_SUBJECTS } from '../data/egyptLevels';
 import { PRACTICE_SUBJECTS, PracticeSubjectInfo } from '../data/practiceSubjects';
 import { t, UI_TEXT } from '../data/i18n';
+import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 import { BilingualText, PlayerProgress, SubjectId, WorldId } from '../types/game';
 import { getSubjectMasteryStats, SubjectMasteryStats } from '../utils/scoring';
 import { soundEngine } from '../utils/sound';
@@ -37,6 +38,7 @@ interface PracticeMenuScreenProps {
   onNavigateHome: () => void;
   onNavigateGame: () => void;
   onNavigateStickers: () => void;
+  onNavigateExam: () => void;
   onToggleMute: () => void;
   onToggleMusic: () => void;
   onToggleLang: () => void;
@@ -127,6 +129,7 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
   onNavigateHome,
   onNavigateGame,
   onNavigateStickers,
+  onNavigateExam,
   onToggleMute,
   onToggleMusic,
   onToggleLang,
@@ -135,6 +138,7 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
   const [filter, setFilter] = useState<WorldId | 'all'>(initialFilter);
   const [celebratingSubjectId, setCelebratingSubjectId] = useState<SubjectId | null>(null);
   const [burstKey, setBurstKey] = useState(0);
+  const celebrationDialogRef = useRef<HTMLDivElement>(null);
 
   const confettiPieces = useMemo(() => buildConfettiBurst(), []);
 
@@ -162,18 +166,6 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
     }
   }, [celebratingSubjectId, progress.celebratedMasteredSubjects, subjectStats]);
 
-  // Allow dismissing celebration with Escape
-  useEffect(() => {
-    if (!celebratingSubjectId) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        handleDismissCelebration();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
-
   const handleDismissCelebration = () => {
     if (!celebratingSubjectId) return;
     soundEngine.playClick();
@@ -183,6 +175,8 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
       onMarkSubjectCelebrated(finishedId);
     }
   };
+
+  useModalFocusTrap(celebrationDialogRef, celebratingSubjectId !== null, handleDismissCelebration);
 
   const handleReplayCelebration = (e: React.MouseEvent, subjId: SubjectId) => {
     e.stopPropagation();
@@ -221,6 +215,7 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
         onNavigateHome={onNavigateHome}
         onNavigateGame={onNavigateGame}
         onNavigatePractice={() => {}}
+        onNavigateExam={onNavigateExam}
         onNavigateStickers={onNavigateStickers}
         onToggleLang={onToggleLang}
         onToggleMute={onToggleMute}
@@ -277,7 +272,11 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
 
         <div
           role="tablist"
-          aria-label="Filter subjects by curriculum area"
+          aria-label={
+            lang === 'ar'
+              ? 'تصفية المواد حسب مجال المنهج'
+              : 'Filter subjects by curriculum area'
+          }
           className="flex flex-wrap items-center gap-1.5 p-1.5 bg-[#F1EDE1] rounded-2xl w-fit"
         >
           {FILTER_TABS.map((tab) => {
@@ -498,17 +497,19 @@ export const PracticeMenuScreen: React.FC<PracticeMenuScreenProps> = ({
 
             {/* Celebratory Medallion Card */}
             <motion.div
+              ref={celebrationDialogRef}
+              tabIndex={-1}
               initial={{ scale: 0.78, y: 28, opacity: 0 }}
               animate={{ scale: 1, y: 0, opacity: 1 }}
               exit={{ scale: 0.88, y: 16, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 320, damping: 22 }}
               onClick={(e) => e.stopPropagation()}
-              className="relative w-full max-w-md bg-[#FFFDF7] border-2 border-[#133C3B] rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center gap-5 overflow-hidden"
+              className="relative w-full max-w-md bg-[#FFFDF7] border-2 border-[#133C3B] rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center gap-5 overflow-hidden outline-none"
             >
               <button
                 type="button"
                 onClick={handleDismissCelebration}
-                aria-label="Close celebration"
+                aria-label={lang === 'ar' ? 'إغلاق الاحتفال' : 'Close celebration'}
                 className={`absolute top-4 ${
                   lang === 'ar' ? 'left-4' : 'right-4'
                 } w-9 h-9 rounded-xl bg-white border border-[#133C3B]/20 text-[#475569] hover:text-[#133C3B] hover:bg-[#FEF3C7] flex items-center justify-center cursor-pointer`}

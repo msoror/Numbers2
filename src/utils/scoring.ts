@@ -1,7 +1,10 @@
 import {
+  ActiveLevelSessionSnapshot,
   EquippedCosmetics,
   LevelAttemptRecord,
   LevelConfig,
+  LevelNumber,
+  PlacementExamResult,
   PlayerProgress,
   RoundAdvancePayload,
   SubjectId,
@@ -10,6 +13,9 @@ import {
 export const MASTERY_ACCURACY_THRESHOLD = 0.8;
 export const MAX_RECENT_ATTEMPTS = 3;
 export const REPEATED_MISTAKE_THRESHOLD = 2;
+export const MAX_PLACEMENT_HISTORY = 5;
+
+const ACTIVE_SESSION_STORAGE_KEY = 'nile_numbers_active_session_v1';
 
 export interface RoundSessionState {
   roundIndex: number;
@@ -88,7 +94,6 @@ export function advanceRoundSession(
   if (state.finished) return state;
 
   const updatedFirstTry = state.firstTryCount + (payload.correctFirstTry ? 1 : 0);
-  // Ensure streak/bestStreak remain accurate even if advance is invoked directly in tests
   let nextStreak = state.streak;
   let nextBestStreak = state.bestStreak;
   if (!state.resolvedCurrentRound) {
@@ -227,8 +232,6 @@ export function getSubjectMasteryStats(
     recentAccuracy !== null ? Math.round(recentAccuracy * 100) : null;
 
   const isCompleted = levels.length > 0 && completedLevels === levels.length;
-  // A topic counts as "mastered" only when every level is completed, has recent accuracy data,
-  // and recent first-try accuracy across its levels is at least 80%.
   const isMastered =
     isCompleted &&
     levelsWithRecentHistory === levels.length &&
@@ -251,20 +254,19 @@ export function getSubjectMasteryStats(
 
 export function isLevelUnlockedForPlayer(level: LevelConfig, progress: PlayerProgress): boolean {
   if (level.levelNumber <= 2) return true;
+  const recommendedUnlock = progress.recommendedUnlockedLevels[level.subjectId] ?? 2;
+  if (level.levelNumber <= recommendedUnlock) return true;
   const prevId = `${level.subjectId}-${level.levelNumber - 1}`;
   return isLevelCompleted(prevId, progress);
 }
 
 /**
  * Picks the next unfinished unlocked level for the Home screen "Continue Learning" CTA.
- * Prefers continuing the subject the student most recently made progress in;
- * otherwise returns the first unfinished unlocked level (or the lowest-accuracy level if all 60 are done).
  */
 export function getNextContinueLevel(
   allLevels: LevelConfig[],
   progress: PlayerProgress
 ): LevelConfig {
-  // 1. Check subjects where the player already started some levels but hasn't finished all 5
   const startedSubjects = new Set<SubjectId>();
   for (const lvl of allLevels) {
     if (isLevelCompleted(lvl.id, progress)) {
@@ -282,13 +284,11 @@ export function getNextContinueLevel(
     if (nextInStarted) return nextInStarted;
   }
 
-  // 2. Otherwise pick the very first unfinished unlocked level
   const firstUnfinished = allLevels.find(
     (l) => isLevelUnlockedForPlayer(l, progress) && !isLevelCompleted(l.id, progress)
   );
   if (firstUnfinished) return firstUnfinished;
 
-  // 3. If every level is completed, suggest the first non-mastered level to raise accuracy >= 80%
   const firstUnmastered = allLevels.find((l) => !isLevelMastered(l.id, progress));
   return firstUnmastered ?? allLevels[0];
 }
@@ -310,6 +310,9 @@ export function createDefaultProgress(): PlayerProgress {
     celebratedMasteredSubjects: [],
     purchasedCosmetics: [],
     equippedCosmetics: { ...DEFAULT_EQUIPPED_COSMETICS },
+    placementHistory: [],
+    recommendedUnlockedLevels: {},
+    hasDismissedPlacementPrompt: false,
     totalStars: 0,
     totalGems: 0,
     bestStreak: 0,
@@ -318,9 +321,100 @@ export function createDefaultProgress(): PlayerProgress {
   };
 }
 
+function sanitizePlacementHistory(
+  raw: unknown,
+  validSubjectIds: Set<string>
+): PlacementExamResult[] {
+  if (!Array.isArray(raw)) return [];
+  const valid: PlacementExamResult[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const item = entry as Record<string, unknown>;
+    const rawSubjects = Array.isArray(item.subjects)
+      ? item.subjects
+      : Array.isArray(item.subjectResults)
+      ? item.subjectResults
+      : null;
+
+    if (
+      typeof item.id !== 'string' ||
+      typeof item.completedAt !== 'string' ||
+      typeof item.totalCorrect !== 'number' ||
+      typeof item.totalQuestions !== 'number' ||
+      item.totalQuestions <= 0 ||
+      !rawSubjects
+    ) {
+      continue;
+    }
+
+    const cleanSubjects = rawSubjects
+      .filter((s): s is Record<string, unknown> => {
+        if (!s || typeof s !== 'object') return false;
+        const r = s as Record<string, unknown>;
+        return (
+          validSubjectIds.has(String(r.subjectId)) &&
+          typeof r.correct === 'number' &&
+          typeof r.total === 'number' &&
+          r.total > 0
+        );
+      })
+      .map((s) => {
+        const total = Math.max(1, Math.floor(Number(s.total)));
+        const correct = Math.max(0, Math.min(total, Math.floor(Number(s.correct))));
+        const rawRec = Number(s.recommendedStartLevel ?? s.recommendedLevel ?? 1);
+        const recLevel = ([1, 2, 3, 4, 5].includes(rawRec) ? rawRec : 1) as LevelNumber;
+        return {
+          subjectId: s.subjectId as SubjectId,
+          correct,
+          total,
+          accuracy: Math.max(0, Math.min(1, Number(s.accuracy) || 0)),
+          avgResponseMs: Math.max(0, Math.floor(Number(s.avgResponseMs) || 0)),
+          tier: (s.tier === 'strong' || s.tier === 'developing' || s.tier === 'needs_support'
+            ? s.tier
+            : 'developing') as PlacementExamResult['subjects'][number]['tier'],
+          recommendedStartLevel: recLevel,
+        };
+      });
+
+    if (cleanSubjects.length === 0) continue;
+
+    const rawOverall = (item.overallLevel ?? item.overallLevelLabel) as
+      | { en?: unknown; ar?: unknown }
+      | undefined;
+    const overallLevel =
+      rawOverall && typeof rawOverall.en === 'string' && typeof rawOverall.ar === 'string'
+        ? { en: rawOverall.en, ar: rawOverall.ar }
+        : { en: 'Growing Explorer', ar: 'مستكشف متطور' };
+
+    const rawPractice = Array.isArray(item.topAreasToPractice)
+      ? item.topAreasToPractice
+      : Array.isArray(item.topPracticeAreas)
+      ? item.topPracticeAreas
+      : [];
+
+    valid.push({
+      id: item.id,
+      completedAt: item.completedAt,
+      totalCorrect: Math.max(0, Math.floor(item.totalCorrect)),
+      totalQuestions: Math.max(1, Math.floor(item.totalQuestions)),
+      overallAccuracy: Math.max(0, Math.min(1, Number(item.overallAccuracy) || 0)),
+      overallLevel,
+      avgResponseMs: Math.max(0, Math.floor(Number(item.avgResponseMs) || 0)),
+      subjects: cleanSubjects,
+      topStrengths: Array.isArray(item.topStrengths)
+        ? item.topStrengths.filter((id): id is SubjectId => validSubjectIds.has(String(id)))
+        : [],
+      topAreasToPractice: rawPractice.filter((id): id is SubjectId =>
+        validSubjectIds.has(String(id))
+      ),
+    });
+  }
+  return valid.slice(0, MAX_PLACEMENT_HISTORY);
+}
+
 /**
- * Safely migrates legacy or partial localStorage progress snapshots
- * without losing stars, gems, stickers, practiced subjects, or settings.
+ * Safely migrates legacy or partial localStorage / imported JSON progress snapshots
+ * without losing stars, gems, stickers, practiced subjects, placement history, or settings.
  */
 export function migrateProgress(
   raw: unknown,
@@ -398,7 +492,9 @@ export function migrateProgress(
   const rawEquipped = parsed.equippedCosmetics;
   const equippedCosmetics: EquippedCosmetics = {
     outfitId:
-      rawEquipped && typeof rawEquipped.outfitId === 'string' && purchasedCosmetics.includes(rawEquipped.outfitId)
+      rawEquipped &&
+      typeof rawEquipped.outfitId === 'string' &&
+      purchasedCosmetics.includes(rawEquipped.outfitId)
         ? rawEquipped.outfitId
         : null,
     accessoryId:
@@ -408,10 +504,27 @@ export function migrateProgress(
         ? rawEquipped.accessoryId
         : null,
     trailId:
-      rawEquipped && typeof rawEquipped.trailId === 'string' && purchasedCosmetics.includes(rawEquipped.trailId)
+      rawEquipped &&
+      typeof rawEquipped.trailId === 'string' &&
+      purchasedCosmetics.includes(rawEquipped.trailId)
         ? rawEquipped.trailId
         : null,
   };
+
+  const placementHistory = sanitizePlacementHistory(parsed.placementHistory, validSubjectIds);
+
+  const recommendedUnlockedLevels: Partial<Record<SubjectId, LevelNumber>> = {};
+  if (parsed.recommendedUnlockedLevels && typeof parsed.recommendedUnlockedLevels === 'object') {
+    for (const [subjId, lvl] of Object.entries(parsed.recommendedUnlockedLevels)) {
+      if (
+        validSubjectIds.has(subjId) &&
+        typeof lvl === 'number' &&
+        [1, 2, 3, 4, 5].includes(Math.floor(lvl))
+      ) {
+        recommendedUnlockedLevels[subjId as SubjectId] = Math.floor(lvl) as LevelNumber;
+      }
+    }
+  }
 
   return {
     ...defaults,
@@ -424,10 +537,129 @@ export function migrateProgress(
     celebratedMasteredSubjects: sanitizedCelebrated,
     purchasedCosmetics,
     equippedCosmetics,
+    placementHistory,
+    recommendedUnlockedLevels,
+    hasDismissedPlacementPrompt: Boolean(parsed.hasDismissedPlacementPrompt),
     totalStars,
-    totalGems: typeof parsed.totalGems === 'number' && parsed.totalGems >= 0 ? Math.floor(parsed.totalGems) : 0,
-    bestStreak: typeof parsed.bestStreak === 'number' && parsed.bestStreak >= 0 ? Math.floor(parsed.bestStreak) : 0,
+    totalGems:
+      typeof parsed.totalGems === 'number' && parsed.totalGems >= 0
+        ? Math.floor(parsed.totalGems)
+        : 0,
+    bestStreak:
+      typeof parsed.bestStreak === 'number' && parsed.bestStreak >= 0
+        ? Math.floor(parsed.bestStreak)
+        : 0,
     muted: Boolean(parsed.muted),
     musicEnabled: typeof parsed.musicEnabled === 'boolean' ? parsed.musicEnabled : true,
   };
+}
+
+/* ============================================================================
+   UNFINISHED LEVEL RESUME & PROGRESS JSON EXPORT/IMPORT
+   ============================================================================ */
+
+export function saveActiveLevelSession(snapshot: ActiveLevelSessionSnapshot): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // Ignore quota errors
+  }
+}
+
+export function loadActiveLevelSession(
+  validLevelIds: Set<string>
+): ActiveLevelSessionSnapshot | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ActiveLevelSessionSnapshot>;
+    if (
+      !parsed ||
+      typeof parsed.levelId !== 'string' ||
+      !validLevelIds.has(parsed.levelId) ||
+      !Array.isArray(parsed.questions) ||
+      parsed.questions.length === 0 ||
+      typeof parsed.roundIndex !== 'number' ||
+      parsed.roundIndex < 0 ||
+      parsed.roundIndex >= parsed.questions.length
+    ) {
+      return null;
+    }
+    return {
+      levelId: parsed.levelId,
+      questions: parsed.questions,
+      roundIndex: parsed.roundIndex,
+      totalRounds: parsed.questions.length,
+      missedCurrentRound: Boolean(parsed.missedCurrentRound),
+      resolvedCurrentRound: false,
+      firstTryCount: Math.max(0, Math.floor(Number(parsed.firstTryCount) || 0)),
+      streak: Math.max(0, Math.floor(Number(parsed.streak) || 0)),
+      bestStreak: Math.max(0, Math.floor(Number(parsed.bestStreak) || 0)),
+      mistakeSkills: Array.isArray(parsed.mistakeSkills)
+        ? parsed.mistakeSkills.filter((s): s is string => typeof s === 'string')
+        : [],
+      savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearActiveLevelSession(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+  } catch {
+    // Ignore
+  }
+}
+
+export interface ProgressBackupEnvelope {
+  app: 'nile-numbers';
+  version: 2;
+  exportedAt: string;
+  progress: PlayerProgress;
+}
+
+export function serializeProgressBackup(progress: PlayerProgress): string {
+  const envelope: ProgressBackupEnvelope = {
+    app: 'nile-numbers',
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    progress,
+  };
+  return JSON.stringify(envelope, null, 2);
+}
+
+export function parseProgressBackup(
+  jsonText: string,
+  validLevelIds: Set<string>,
+  validSubjectIds: Set<string>
+): PlayerProgress | null {
+  try {
+    const parsed = JSON.parse(jsonText) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+    const record = parsed as Record<string, unknown>;
+    const candidate =
+      record.app === 'nile-numbers' && record.progress && typeof record.progress === 'object'
+        ? record.progress
+        : record;
+
+    // Require at least one recognizable progress field so arbitrary JSON files are rejected safely
+    const c = candidate as Record<string, unknown>;
+    const looksValid =
+      'starsByLevel' in c ||
+      'totalGems' in c ||
+      'unlockedStickers' in c ||
+      'language' in c ||
+      'placementHistory' in c;
+    if (!looksValid) return null;
+
+    return migrateProgress(candidate, validLevelIds, validSubjectIds);
+  } catch {
+    return null;
+  }
 }

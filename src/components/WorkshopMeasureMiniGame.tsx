@@ -3,8 +3,10 @@ import { AlertCircle, ArrowRight, Check, Droplets, Lightbulb, RotateCcw } from '
 import { t, UI_TEXT } from '../data/i18n';
 import { usePausableTimer } from '../hooks/usePausableTimer';
 import { BilingualText, Language, RoundAdvancePayload, WorkshopQuestion } from '../types/game';
+import egyptWorkshopBg from '../assets/images/egypt_workshop_bg.webp';
 import { soundEngine } from '../utils/sound';
 import { EgyptShapeSvg, FractionCircleSvg } from './EgyptSvgs';
+import { ReadAloudButton } from './ReadAloudButton';
 
 interface WorkshopMeasureMiniGameProps {
   question: WorkshopQuestion;
@@ -168,9 +170,8 @@ export const WorkshopMeasureMiniGame: React.FC<WorkshopMeasureMiniGameProps> = (
         aria-hidden="true"
       >
         <img
-          src="/src/assets/images/egypt_workshop_bg_1794872912622.jpg"
-          alt="Sunlit Egyptian artisan measurement workshop"
-          referrerPolicy="no-referrer"
+          src={egyptWorkshopBg}
+          alt=""
           className="w-full h-full object-cover opacity-90"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/25" />
@@ -178,10 +179,11 @@ export const WorkshopMeasureMiniGame: React.FC<WorkshopMeasureMiniGameProps> = (
 
       {/* Zone 1: Top Prompt */}
       <div className="relative z-10 pt-16 sm:pt-17 px-3 sm:px-4 flex justify-center shrink-0">
-        <div className="bg-[#FFFDF7] border-2 border-[#133C3B] rounded-2xl px-4 sm:px-6 py-2.5 sm:py-3 shadow-md text-center max-w-2xl w-full">
-          <h2 className="font-display text-lg sm:text-2xl font-bold text-[#133C3B] leading-snug">
+        <div className="bg-[#FFFDF7] border-2 border-[#133C3B] rounded-2xl px-3.5 sm:px-6 py-2.5 sm:py-3 shadow-md max-w-2xl w-full flex items-center justify-between gap-2.5">
+          <h2 className="font-display text-lg sm:text-2xl font-bold text-[#133C3B] leading-snug text-center flex-1">
             {t(question.prompt, lang)}
           </h2>
+          <ReadAloudButton text={t(question.prompt, lang)} lang={lang} disabled={isPaused} compact />
         </div>
       </div>
 
@@ -191,7 +193,15 @@ export const WorkshopMeasureMiniGame: React.FC<WorkshopMeasureMiniGameProps> = (
         {question.kind === 'capacity_pour' && (
           <div className="bg-[#FFFDF7]/95 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-6 shadow-xl flex flex-col sm:flex-row items-center gap-4 sm:gap-7">
             <div className="flex items-end gap-3.5">
-              <div className="relative w-28 sm:w-32 h-44 sm:h-52 rounded-b-3xl rounded-t-lg border-4 border-[#133C3B] bg-[#F8FAFC] overflow-hidden flex flex-col justify-end">
+              <div
+                role="img"
+                aria-label={
+                  lang === 'ar'
+                    ? `دورق قياس سعته ${question.maxMl} مل، به الآن ${pouredMl} مل والهدف ${question.targetMl} مل`
+                    : `${question.maxMl} mL measuring jug currently filled to ${pouredMl} mL with target line at ${question.targetMl} mL`
+                }
+                className="relative w-28 sm:w-32 h-44 sm:h-52 rounded-b-3xl rounded-t-lg border-4 border-[#133C3B] bg-[#F8FAFC] overflow-hidden flex flex-col justify-end"
+              >
                 <div
                   className={`w-full transition-all duration-300 ${
                     pouredMl > question.targetMl
@@ -263,6 +273,12 @@ export const WorkshopMeasureMiniGame: React.FC<WorkshopMeasureMiniGameProps> = (
         {question.kind === 'measure_length' && (
           <div
             dir="ltr"
+            role="img"
+            aria-label={
+              lang === 'ar'
+                ? `مسطرة من 0 إلى ${question.maxCm} سم تُظهر ${question.objectName.ar} يبدأ عند ${question.startCm} سم وينتهي عند ${question.startCm + question.lengthCm} سم`
+                : `Centimeter ruler from 0 to ${question.maxCm} cm showing ${question.objectName.en} starting at ${question.startCm} cm and ending at ${question.startCm + question.lengthCm} cm`
+            }
             className="bg-[#FFFDF7]/95 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-7 shadow-xl w-full max-w-3xl flex flex-col gap-4"
           >
             <div className="relative h-12 sm:h-14 w-full">
@@ -300,7 +316,15 @@ export const WorkshopMeasureMiniGame: React.FC<WorkshopMeasureMiniGameProps> = (
 
         {/* 3. MASS / UNIT COMPARISON SCALE */}
         {question.kind === 'mass_or_unit' && (
-          <div className="bg-[#FFFDF7]/95 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-6 shadow-xl w-full max-w-2xl flex flex-col items-center gap-3.5">
+          <div
+            role="img"
+            aria-label={
+              lang === 'ar'
+                ? `ميزان ذو كفتين: الكفة اليسرى بها ${question.leftLabel.ar} والكفة اليمنى بها ${question.rightLabel.ar}`
+                : `Balance scale comparing ${question.leftLabel.en} on the left pan and ${question.rightLabel.en} on the right pan`
+            }
+            className="bg-[#FFFDF7]/95 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-6 shadow-xl w-full max-w-2xl flex flex-col items-center gap-3.5"
+          >
             <div
               className="w-full flex items-end justify-around gap-3 sm:gap-4 transition-transform duration-300"
               style={{
@@ -342,17 +366,35 @@ export const WorkshopMeasureMiniGame: React.FC<WorkshopMeasureMiniGameProps> = (
                   totalParts={question.fractionTotalParts}
                   shadedParts={question.fractionShadedParts}
                   size={156}
+                  lang={lang}
                 />
               )}
 
             {question.subKind === 'shape' && question.shape && (
-              <EgyptShapeSvg shape={question.shape} size={144} showVertices={showHint} />
+              <EgyptShapeSvg
+                shape={question.shape}
+                size={144}
+                showVertices={showHint}
+                lang={lang}
+                hideName={
+                  question.prompt.en.toLowerCase().includes('name') ||
+                  question.prompt.en.toLowerCase().includes('identify')
+                }
+              />
             )}
 
             {question.subKind === 'graph' && question.graphBars && (() => {
               const maxBar = Math.max(...question.graphBars.map((b) => b.count), 1);
+              const graphAria =
+                lang === 'ar'
+                  ? `رسم بياني بالأعمدة يعرض: ${question.graphBars.map((b) => `${b.label.ar} ${b.count}`).join('، ')}`
+                  : `Bar graph showing: ${question.graphBars.map((b) => `${b.label.en} ${b.count}`).join(', ')}`;
               return (
-                <div className="flex items-end justify-center gap-4 sm:gap-6 h-44 sm:h-48 px-3 sm:px-4 pt-4 border-b-2 border-[#133C3B]">
+                <div
+                  role="img"
+                  aria-label={graphAria}
+                  className="flex items-end justify-center gap-4 sm:gap-6 h-44 sm:h-48 px-3 sm:px-4 pt-4 border-b-2 border-[#133C3B]"
+                >
                   {question.graphBars.map((bar, idx) => (
                     <div key={idx} className="flex flex-col items-center gap-1.5">
                       <span className="font-display text-base sm:text-lg font-bold text-[#133C3B] tabular-nums">

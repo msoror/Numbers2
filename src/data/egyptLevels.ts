@@ -14,6 +14,11 @@ import {
   WorkshopQuestion,
   WorldId,
 } from '../types/game';
+import {
+  getCombinedSeenSignatures,
+  getQuestionSignature,
+  recordSeenQuestions,
+} from '../utils/questionHistory';
 
 /* ============================================================================
    12 EGYPTIAN STICKERS (1 UNIQUE STICKER PER STANDALONE SUBJECT)
@@ -382,27 +387,59 @@ export const EGYPT_LEVELS: LevelConfig[] = EGYPT_SUBJECTS.flatMap((subject) =>
 );
 
 /* ============================================================================
-   SHARED RANDOMIZATION & DEDUPLICATION HELPERS
+   SHARED RANDOMIZATION, SEEDED PRNG & DEDUPLICATION HELPERS
    ============================================================================ */
+let customRng: (() => number) | null = null;
+let uidCounter = 0;
+
+export function nextRandom(): number {
+  return customRng ? customRng() : Math.random();
+}
+
+function createMulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Runs a callback with a deterministic Mulberry32 PRNG so automated tests can
+ * reproduce exact generator outputs reliably without affecting runtime play.
+ */
+export function withSeededRandom<T>(seed: number, fn: () => T): T {
+  const prev = customRng;
+  customRng = createMulberry32(seed);
+  try {
+    return fn();
+  } finally {
+    customRng = prev;
+  }
+}
+
 export function randInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.floor(nextRandom() * (max - min + 1)) + min;
 }
 
 export function pickOne<T>(arr: readonly T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+  return arr[Math.floor(nextRandom() * arr.length)];
 }
 
 export function shuffle<T>(arr: readonly T[]): T[] {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(nextRandom() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy;
 }
 
 function uid(prefix: string, idx: number): string {
-  return `${prefix}-${idx}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  uidCounter += 1;
+  return `${prefix}-${idx}-${uidCounter}-${Math.floor(nextRandom() * 1e6).toString(36)}`;
 }
 
 export function buildNumberOptions(answer: number, offsets: number[], minVal = 1): number[] {
@@ -425,19 +462,32 @@ export function buildNumberOptions(answer: number, offsets: number[], minVal = 1
 
 function generateUniqueList<T>(
   count: number,
-  factory: (idx: number) => { signature: string; item: T }
+  factory: (idx: number) => { signature: string; item: T },
+  avoidSignatures?: Set<string>
 ): T[] {
-  const seen = new Set<string>();
+  const localSeen = new Set<string>();
   const out: T[] = [];
   for (let i = 0; i < count; i++) {
     let chosen = factory(i);
+    let fallbackFreshInRound: { signature: string; item: T } | null = !localSeen.has(chosen.signature)
+      ? chosen
+      : null;
     let tries = 0;
-    while (seen.has(chosen.signature) && tries < 25) {
+    while (
+      (localSeen.has(chosen.signature) || (avoidSignatures ? avoidSignatures.has(chosen.signature) : false)) &&
+      tries < 120
+    ) {
       chosen = factory(i);
+      if (!fallbackFreshInRound && !localSeen.has(chosen.signature)) {
+        fallbackFreshInRound = chosen;
+      }
       tries++;
     }
-    seen.add(chosen.signature);
-    out.push(chosen.item);
+    const picked =
+      localSeen.has(chosen.signature) && fallbackFreshInRound ? fallbackFreshInRound : chosen;
+    localSeen.add(picked.signature);
+    avoidSignatures?.add(picked.signature);
+    out.push(picked.item);
   }
   return out;
 }
@@ -457,7 +507,7 @@ const BAZAAR_ITEMS: BilingualText[] = [
   { en: 'Silk Scarf', ar: 'وشاح حريري' },
 ];
 
-function genPlaceValue(level: LevelNumber, count: number): BazaarQuestion[] {
+function genPlaceValue(level: LevelNumber, count: number, avoid?: Set<string>): BazaarQuestion[] {
   return generateUniqueList<BazaarQuestion>(count, (i) => {
     const makeCompare = level === 4 || (level === 5 && i % 2 === 1);
 
@@ -468,14 +518,14 @@ function genPlaceValue(level: LevelNumber, count: number): BazaarQuestion[] {
       const t1 = randInt(0, 9);
       const t2 = level === 5 && i % 3 === 1 ? t1 : randInt(0, 9);
       const o1 = randInt(1, 9);
-      const makeEqual = i === 3 && Math.random() < 0.55;
+      const makeEqual = i === 3 && nextRandom() < 0.55;
       const leftValue = h1 * 100 + t1 * 10 + o1;
       const rightValue = makeEqual ? leftValue : h2 * 100 + t2 * 10 + randInt(0, 9);
       const ans: '<' | '=' | '>' =
         leftValue < rightValue ? '<' : leftValue > rightValue ? '>' : '=';
 
       return {
-        signature: `cmp-${leftValue}-${rightValue}`,
+        signature: `mcc:compare:${leftValue}:${rightValue}`,
         item: {
           id: uid('pv-cmp', i),
           kind: 'money_change_or_compare',
@@ -514,7 +564,7 @@ function genPlaceValue(level: LevelNumber, count: number): BazaarQuestion[] {
       // Level 3 & 5 purposefully include tricky zero-tens or zero-ones numbers
       const zeroTrick = i % 2 === 0;
       if (zeroTrick) {
-        if (Math.random() < 0.5) {
+        if (nextRandom() < 0.5) {
           tens = 0;
           ones = randInt(1, 9);
         } else {
@@ -551,7 +601,7 @@ function genPlaceValue(level: LevelNumber, count: number): BazaarQuestion[] {
     }
 
     return {
-      signature: `pv-${value}`,
+      signature: `pv:${hundreds}:${tens}:${ones}`,
       item: {
         id: uid('pv', i),
         kind: 'place_value',
@@ -576,10 +626,10 @@ function genPlaceValue(level: LevelNumber, count: number): BazaarQuestion[] {
         },
       },
     };
-  });
+  }, avoid);
 }
 
-function genMoney(level: LevelNumber, count: number): BazaarQuestion[] {
+function genMoney(level: LevelNumber, count: number, avoid?: Set<string>): BazaarQuestion[] {
   return generateUniqueList<BazaarQuestion>(count, (i) => {
     const isChange = level === 4 || (level === 5 && i % 3 !== 2);
 
@@ -595,7 +645,7 @@ function genMoney(level: LevelNumber, count: number): BazaarQuestion[] {
       const change = paid - cost;
 
       return {
-        signature: `chg-${paid}-${cost}`,
+        signature: `mcc:change:${paid}:${cost}`,
         item: {
           id: uid('mon-chg', i),
           kind: 'money_change_or_compare',
@@ -633,7 +683,7 @@ function genMoney(level: LevelNumber, count: number): BazaarQuestion[] {
     const oCount = rem % 10;
 
     return {
-      signature: `pay-${targetAmount}`,
+      signature: `mb:${targetAmount}:${itemName.en}`,
       item: {
         id: uid('mon-pay', i),
         kind: 'money_build',
@@ -650,10 +700,10 @@ function genMoney(level: LevelNumber, count: number): BazaarQuestion[] {
         },
       },
     };
-  });
+  }, avoid);
 }
 
-function genVerticalMath(level: LevelNumber, count: number): NileQuestion[] {
+function genVerticalMath(level: LevelNumber, count: number, avoid?: Set<string>): NileQuestion[] {
   return generateUniqueList<NileQuestion>(count, (i) => {
     const op: '+' | '-' = i % 2 === 0 ? '+' : '-';
     let top = 34;
@@ -770,7 +820,7 @@ function genVerticalMath(level: LevelNumber, count: number): NileQuestion[] {
       level >= 3 ? [-100, -10, -2, -1, 1, 2, 10, 100] : [-10, -2, -1, 1, 2, 10];
 
     return {
-      signature: `vm-${op}-${top}-${bottom}`,
+      signature: `vm:${op}:${top}:${bottom}`,
       item: {
         id: uid('vm', i),
         kind: 'vertical_math',
@@ -812,16 +862,16 @@ function genVerticalMath(level: LevelNumber, count: number): NileQuestion[] {
         },
       },
     };
-  });
+  }, avoid);
 }
 
-function genArrays(level: LevelNumber, count: number): NileQuestion[] {
+function genArrays(level: LevelNumber, count: number, avoid?: Set<string>): NileQuestion[] {
   const bounds: Record<LevelNumber, [number, number, number, number]> = {
-    1: [2, 3, 2, 3],
-    2: [2, 4, 2, 4],
-    3: [2, 5, 3, 5],
-    4: [3, 5, 3, 6],
-    5: [3, 6, 4, 6],
+    1: [2, 4, 2, 5],
+    2: [2, 5, 2, 5],
+    3: [2, 6, 3, 6],
+    4: [3, 6, 3, 6],
+    5: [3, 7, 4, 7],
   };
   const [minR, maxR, minC, maxC] = bounds[level];
 
@@ -831,7 +881,7 @@ function genArrays(level: LevelNumber, count: number): NileQuestion[] {
     const answer = rows * cols;
 
     return {
-      signature: `arr-${rows}-${cols}`,
+      signature: `arr:${rows}x${cols}`,
       item: {
         id: uid('arr', i),
         kind: 'array_multiply',
@@ -849,10 +899,10 @@ function genArrays(level: LevelNumber, count: number): NileQuestion[] {
         },
       },
     };
-  });
+  }, avoid);
 }
 
-function genClock(level: LevelNumber, count: number): ClockQuestion[] {
+function genClock(level: LevelNumber, count: number, avoid?: Set<string>): ClockQuestion[] {
   const padM = (m: number) => (m < 10 ? `0${m}` : `${m}`);
 
   return generateUniqueList<ClockQuestion>(count, (i) => {
@@ -871,7 +921,7 @@ function genClock(level: LevelNumber, count: number): ClockQuestion[] {
       const stepMinutes: 5 | 15 = level === 5 && minute % 15 !== 0 ? 5 : 15;
       const startHour = hour === 1 ? 12 : hour - 1;
       return {
-        signature: `clk-set-${hour}-${minute}`,
+        signature: `sc:${hour}:${minute}:${startHour}:0`,
         item: {
           id: uid('clk-set', i),
           kind: 'set_clock',
@@ -930,14 +980,15 @@ function genClock(level: LevelNumber, count: number): ClockQuestion[] {
     const opts = shuffle(candidates);
     const correctIndex = opts.findIndex((o) => o.hour === hour && o.minute === minute);
 
+    const dayPeriod: 'am' | 'pm' = nextRandom() < 0.5 ? 'am' : 'pm';
     return {
-      signature: `clk-read-${hour}-${minute}`,
+      signature: `rc:${hour}:${minute}:${dayPeriod}`,
       item: {
         id: uid('clk-read', i),
         kind: 'read_clock',
         hour,
         minute,
-        dayPeriod: Math.random() < 0.5 ? 'am' : 'pm',
+        dayPeriod,
         options: opts,
         correctIndex,
         prompt: {
@@ -950,7 +1001,7 @@ function genClock(level: LevelNumber, count: number): ClockQuestion[] {
         },
       },
     };
-  });
+  }, avoid);
 }
 
 const WEEKDAYS: BilingualText[] = [
@@ -963,7 +1014,7 @@ const WEEKDAYS: BilingualText[] = [
   { en: 'Friday', ar: 'الجمعة' },
 ];
 
-function genCalendar(level: LevelNumber, count: number): ClockQuestion[] {
+function genCalendar(level: LevelNumber, count: number, avoid?: Set<string>): ClockQuestion[] {
   const padM = (m: number) => (m < 10 ? `0${m}` : `${m}`);
 
   return generateUniqueList<ClockQuestion>(count, (i) => {
@@ -979,8 +1030,8 @@ function genCalendar(level: LevelNumber, count: number): ClockQuestion[] {
         : pickOne(['whole_hours', 'mixed_mins', 'weekdays', 'conversions'] as const);
 
     if (mode === 'whole_hours') {
-      const startH = randInt(1, 7);
-      const durH = randInt(1, 4);
+      const startH = randInt(1, 8);
+      const durH = randInt(1, Math.min(5, 12 - startH));
       const endH = startH + durH;
       const numOpts = buildNumberOptions(durH, [-2, -1, 1, 2, 3], 1);
       const options: BilingualText[] = numOpts.map((h) => ({
@@ -988,17 +1039,19 @@ function genCalendar(level: LevelNumber, count: number): ClockQuestion[] {
         ar: h === 1 ? 'ساعة واحدة' : h === 2 ? 'ساعتان' : `${h} ساعات`,
       }));
       const correctIndex = numOpts.indexOf(durH);
+      const prompt = {
+        en: `A Nile boat sails from ${startH}:00 to ${endH}:00. How long was the trip?`,
+        ar: `أبحرت الفلوكة من ${startH}:00 حتى ${endH}:00. كم ساعة استغرقت الرحلة؟`,
+      };
+      const displayBadge = { en: `${startH}:00 → ${endH}:00`, ar: `${startH}:00 ← ${endH}:00` };
 
       return {
-        signature: `cal-hr-${startH}-${durH}`,
+        signature: `cal:${prompt.en}|${displayBadge.en}`,
         item: {
           id: uid('cal-hr', i),
           kind: 'elapsed_or_calendar',
-          prompt: {
-            en: `A Nile boat sails from ${startH}:00 to ${endH}:00. How long was the trip?`,
-            ar: `أبحرت الفلوكة من ${startH}:00 حتى ${endH}:00. كم ساعة استغرقت الرحلة؟`,
-          },
-          displayBadge: { en: `${startH}:00 → ${endH}:00`, ar: `${startH}:00 ← ${endH}:00` },
+          prompt,
+          displayBadge,
           options,
           correctIndex,
           hint: {
@@ -1010,8 +1063,8 @@ function genCalendar(level: LevelNumber, count: number): ClockQuestion[] {
     }
 
     if (mode === 'mixed_mins') {
-      const startH = randInt(1, 9);
-      const startM = pickOne([0, 15, 30]);
+      const startH = randInt(1, 12);
+      const startM = pickOne([0, 15, 30, 45]);
       const addM = pickOne([15, 30, 45]);
       const totalM = startH * 60 + startM + addM;
       const endH = ((Math.floor(totalM / 60) - 1) % 12) + 1;
@@ -1028,20 +1081,22 @@ function genCalendar(level: LevelNumber, count: number): ClockQuestion[] {
       const uniqueStrs = Array.from(new Set([correctStr, ...wrongMins])).slice(0, 4);
       const shuffledStrs = shuffle(uniqueStrs);
       const correctIndex = shuffledStrs.indexOf(correctStr);
+      const prompt = {
+        en: `Class starts at ${formatPair(startH, startM)} and lasts ${addM} minutes. When does it end?`,
+        ar: `تبدأ الحصة الساعة ${formatPair(startH, startM)} وتستمر ${addM} دقيقة. متى تنتهي؟`,
+      };
+      const displayBadge = {
+        en: `${formatPair(startH, startM)} + ${addM} min`,
+        ar: `${formatPair(startH, startM)} + ${addM} د`,
+      };
 
       return {
-        signature: `cal-min-${startH}-${startM}-${addM}`,
+        signature: `cal:${prompt.en}|${displayBadge.en}`,
         item: {
           id: uid('cal-min', i),
           kind: 'elapsed_or_calendar',
-          prompt: {
-            en: `Class starts at ${formatPair(startH, startM)} and lasts ${addM} minutes. When does it end?`,
-            ar: `تبدأ الحصة الساعة ${formatPair(startH, startM)} وتستمر ${addM} دقيقة. متى تنتهي؟`,
-          },
-          displayBadge: {
-            en: `${formatPair(startH, startM)} + ${addM} min`,
-            ar: `${formatPair(startH, startM)} + ${addM} د`,
-          },
+          prompt,
+          displayBadge,
           options: shuffledStrs.map((s) => ({ en: s, ar: s })),
           correctIndex,
           hint: {
@@ -1063,20 +1118,22 @@ function genCalendar(level: LevelNumber, count: number): ClockQuestion[] {
       }
       const optIndices = shuffle(Array.from(idxPool));
       const correctIndex = optIndices.indexOf(targetIdx);
+      const prompt = {
+        en: `Today is ${WEEKDAYS[startIdx].en}. What day comes ${jump} days later?`,
+        ar: `اليوم هو ${WEEKDAYS[startIdx].ar}. ما اليوم الذي يأتي بعد ${jump} أيام؟`,
+      };
+      const displayBadge = {
+        en: `${WEEKDAYS[startIdx].en} + ${jump} days`,
+        ar: `${WEEKDAYS[startIdx].ar} + ${jump} أيام`,
+      };
 
       return {
-        signature: `cal-day-${startIdx}-${jump}`,
+        signature: `cal:${prompt.en}|${displayBadge.en}`,
         item: {
           id: uid('cal-day', i),
           kind: 'elapsed_or_calendar',
-          prompt: {
-            en: `Today is ${WEEKDAYS[startIdx].en}. What day comes ${jump} days later?`,
-            ar: `اليوم هو ${WEEKDAYS[startIdx].ar}. ما اليوم الذي يأتي بعد ${jump} أيام؟`,
-          },
-          displayBadge: {
-            en: `${WEEKDAYS[startIdx].en} + ${jump} days`,
-            ar: `${WEEKDAYS[startIdx].ar} + ${jump} أيام`,
-          },
+          prompt,
+          displayBadge,
           options: optIndices.map((idx) => WEEKDAYS[idx]),
           correctIndex,
           hint: {
@@ -1087,26 +1144,28 @@ function genCalendar(level: LevelNumber, count: number): ClockQuestion[] {
       };
     }
 
-    // Conversions: random weeks -> days OR years -> months
-    const isWeeks = Math.random() < 0.6;
-    if (isWeeks) {
-      const weeks = randInt(2, 5);
+    // Conversions: weeks -> days, years -> months, hours -> minutes, days -> hours
+    const convType = pickOne(['weeks', 'years', 'hours', 'days'] as const);
+    if (convType === 'weeks') {
+      const weeks = randInt(2, 8);
       const days = weeks * 7;
       const numOpts = buildNumberOptions(days, [-7, -3, -2, 2, 3, 7], 7);
       const correctIndex = numOpts.indexOf(days);
+      const prompt = {
+        en: `How many days are in ${weeks} full weeks?`,
+        ar: `كم يومًا في ${weeks} أسابيع كاملة؟`,
+      };
+      const displayBadge = {
+        en: `${weeks} Weeks = ? Days`,
+        ar: `${weeks} أسابيع = ؟ يومًا`,
+      };
       return {
-        signature: `cal-wk-${weeks}`,
+        signature: `cal:${prompt.en}|${displayBadge.en}`,
         item: {
           id: uid('cal-wk', i),
           kind: 'elapsed_or_calendar',
-          prompt: {
-            en: `How many days are in ${weeks} full weeks?`,
-            ar: `كم يومًا في ${weeks} أسابيع كاملة؟`,
-          },
-          displayBadge: {
-            en: `${weeks} Weeks = ? Days`,
-            ar: `${weeks} أسابيع = ؟ يومًا`,
-          },
+          prompt,
+          displayBadge,
           options: numOpts.map((n) => ({ en: `${n} days`, ar: `${n} يومًا` })),
           correctIndex,
           hint: {
@@ -1117,23 +1176,85 @@ function genCalendar(level: LevelNumber, count: number): ClockQuestion[] {
       };
     }
 
-    const years = randInt(1, 3);
+    if (convType === 'hours') {
+      const hours = randInt(1, 4);
+      const mins = hours * 60;
+      const numOpts = buildNumberOptions(mins, [-60, -30, -15, 15, 30, 60], 30);
+      const correctIndex = numOpts.indexOf(mins);
+      const prompt = {
+        en: `How many minutes are in ${hours === 1 ? '1 full hour' : `${hours} full hours`}?`,
+        ar: `كم دقيقة في ${hours === 1 ? 'ساعة كاملة' : `${hours} ساعات كاملة`}؟`,
+      };
+      const displayBadge = {
+        en: `${hours} ${hours === 1 ? 'Hour' : 'Hours'} = ? Minutes`,
+        ar: `${hours} ${hours === 1 ? 'ساعة' : 'ساعات'} = ؟ دقيقة`,
+      };
+      return {
+        signature: `cal:${prompt.en}|${displayBadge.en}`,
+        item: {
+          id: uid('cal-hm', i),
+          kind: 'elapsed_or_calendar',
+          prompt,
+          displayBadge,
+          options: numOpts.map((n) => ({ en: `${n} min`, ar: `${n} دقيقة` })),
+          correctIndex,
+          hint: {
+            en: `1 hour = 60 minutes, so ${hours} × 60 = ${mins} minutes!`,
+            ar: `الساعة = ٦٠ دقيقة، إذن ${hours} × ٦٠ = ${mins} دقيقة!`,
+          },
+        },
+      };
+    }
+
+    if (convType === 'days') {
+      const days = randInt(1, 3);
+      const hrs = days * 24;
+      const numOpts = buildNumberOptions(hrs, [-12, -6, 6, 12, 24], 12);
+      const correctIndex = numOpts.indexOf(hrs);
+      const prompt = {
+        en: `How many hours are in ${days === 1 ? '1 full day' : `${days} full days`}?`,
+        ar: `كم ساعة في ${days === 1 ? 'يوم كامل' : `${days} أيام كاملة`}؟`,
+      };
+      const displayBadge = {
+        en: `${days} ${days === 1 ? 'Day' : 'Days'} = ? Hours`,
+        ar: `${days} ${days === 1 ? 'يوم' : 'أيام'} = ؟ ساعة`,
+      };
+      return {
+        signature: `cal:${prompt.en}|${displayBadge.en}`,
+        item: {
+          id: uid('cal-dh', i),
+          kind: 'elapsed_or_calendar',
+          prompt,
+          displayBadge,
+          options: numOpts.map((n) => ({ en: `${n} hours`, ar: `${n} ساعة` })),
+          correctIndex,
+          hint: {
+            en: `1 day = 24 hours, so ${days} × 24 = ${hrs} hours!`,
+            ar: `اليوم = ٢٤ ساعة، إذن ${days} × ٢٤ = ${hrs} ساعة!`,
+          },
+        },
+      };
+    }
+
+    const years = randInt(1, 5);
     const months = years * 12;
     const numOpts = buildNumberOptions(months, [-12, -4, -2, 2, 4, 12], 6);
     const correctIndex = numOpts.indexOf(months);
+    const prompt = {
+      en: `How many months are in ${years === 1 ? '1 full year' : `${years} full years`}?`,
+      ar: `كم شهرًا في ${years === 1 ? 'سنة كاملة' : `${years} سنوات كاملة`}؟`,
+    };
+    const displayBadge = {
+      en: `${years} ${years === 1 ? 'Year' : 'Years'} = ? Months`,
+      ar: `${years} ${years === 1 ? 'سنة' : 'سنوات'} = ؟ شهرًا`,
+    };
     return {
-      signature: `cal-yr-${years}`,
+      signature: `cal:${prompt.en}|${displayBadge.en}`,
       item: {
         id: uid('cal-yr', i),
         kind: 'elapsed_or_calendar',
-        prompt: {
-          en: `How many months are in ${years === 1 ? '1 full year' : `${years} full years`}?`,
-          ar: `كم شهرًا في ${years === 1 ? 'سنة كاملة' : `${years} سنوات كاملة`}؟`,
-        },
-        displayBadge: {
-          en: `${years} ${years === 1 ? 'Year' : 'Years'} = ? Months`,
-          ar: `${years} ${years === 1 ? 'سنة' : 'سنوات'} = ؟ شهرًا`,
-        },
+        prompt,
+        displayBadge,
         options: numOpts.map((n) => ({ en: `${n} months`, ar: `${n} شهرًا` })),
         correctIndex,
         hint: {
@@ -1142,7 +1263,7 @@ function genCalendar(level: LevelNumber, count: number): ClockQuestion[] {
         },
       },
     };
-  });
+  }, avoid);
 }
 
 const RULER_OBJECTS: { name: BilingualText; color: string }[] = [
@@ -1154,7 +1275,7 @@ const RULER_OBJECTS: { name: BilingualText; color: string }[] = [
   { name: { en: 'Lotus Ribbon', ar: 'شريط اللوتس' }, color: '#7C3AED' },
 ];
 
-function genLength(level: LevelNumber, count: number): WorkshopQuestion[] {
+function genLength(level: LevelNumber, count: number, avoid?: Set<string>): WorkshopQuestion[] {
   return generateUniqueList<WorkshopQuestion>(count, (i) => {
     const maxCm = 14;
     let startCm = 0;
@@ -1162,18 +1283,18 @@ function genLength(level: LevelNumber, count: number): WorkshopQuestion[] {
 
     if (level === 1) {
       startCm = 0;
-      lengthCm = randInt(2, 7);
+      lengthCm = randInt(2, 10);
     } else if (level === 2) {
       startCm = 0;
-      lengthCm = randInt(5, 13);
+      lengthCm = randInt(4, 13);
     } else if (level === 3) {
-      startCm = randInt(1, 2);
+      startCm = randInt(1, 3);
       lengthCm = randInt(3, maxCm - startCm);
     } else if (level === 4) {
       startCm = randInt(2, 5);
       lengthCm = randInt(3, maxCm - startCm);
     } else {
-      startCm = randInt(1, 5);
+      startCm = randInt(1, 6);
       lengthCm = randInt(3, maxCm - startCm);
     }
 
@@ -1189,7 +1310,7 @@ function genLength(level: LevelNumber, count: number): WorkshopQuestion[] {
     }
 
     return {
-      signature: `len-${startCm}-${lengthCm}`,
+      signature: `len:${startCm}:${lengthCm}:${obj.name.en}`,
       item: {
         id: uid('len', i),
         kind: 'measure_length',
@@ -1215,33 +1336,60 @@ function genLength(level: LevelNumber, count: number): WorkshopQuestion[] {
         },
       },
     };
-  });
+  }, avoid);
 }
 
-function genCapacity(level: LevelNumber, count: number): WorkshopQuestion[] {
+function genCapacity(level: LevelNumber, count: number, avoid?: Set<string>): WorkshopQuestion[] {
   return generateUniqueList<WorkshopQuestion>(count, (i) => {
     let targetMl = 500;
     let scoops: number[] = [200, 100];
 
     if (level === 1) {
-      targetMl = pickOne([200, 300, 400, 500, 600]);
-      scoops = [200, 100];
+      const scoopVariant = pickOne([
+        [200, 100],
+        [300, 100],
+        [250, 100, 50],
+      ]);
+      targetMl = pickOne([100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]);
+      scoops = scoopVariant;
     } else if (level === 2) {
-      targetMl = pickOne([250, 500, 750, 1000]);
-      scoops = [500, 250];
+      const mode = randInt(0, 2);
+      if (mode === 0) {
+        targetMl = pickOne([250, 500, 750, 1000]);
+        scoops = [500, 250];
+      } else if (mode === 1) {
+        targetMl = pickOne([150, 300, 450, 600, 750, 900]);
+        scoops = [300, 150];
+      } else {
+        targetMl = pickOne([200, 400, 600, 800, 1000]);
+        scoops = [400, 200];
+      }
     } else if (level === 3) {
-      targetMl = randInt(3, 9) * 100;
-      scoops = [500, 200, 100];
+      const scoopVariant = pickOne([
+        [500, 200, 100],
+        [400, 200, 100],
+        [300, 200, 100],
+      ]);
+      targetMl = randInt(2, 10) * 100;
+      scoops = scoopVariant;
     } else if (level === 4) {
-      targetMl = pickOne([350, 450, 550, 650, 750, 850, 950]);
-      scoops = [500, 250, 100, 50];
+      const scoopVariant = pickOne([
+        [500, 250, 100, 50],
+        [400, 200, 100, 50],
+      ]);
+      targetMl = pickOne([150, 250, 350, 450, 550, 650, 750, 850, 950]);
+      scoops = scoopVariant;
     } else {
-      targetMl = randInt(9, 20) * 50; // 450..1000 in 50mL steps
-      scoops = [500, 200, 150, 50];
+      const scoopVariant = pickOne([
+        [500, 200, 150, 50],
+        [450, 250, 100, 50],
+      ]);
+      targetMl = randInt(5, 20) * 50; // 250..1000 in 50mL steps
+      scoops = scoopVariant;
     }
 
     return {
-      signature: `cap-${targetMl}-${scoops.join(',')}`,
+      signature: `cap:${targetMl}:${scoops.join(',')}`,
       item: {
         id: uid('cap', i),
         kind: 'capacity_pour',
@@ -1258,7 +1406,7 @@ function genCapacity(level: LevelNumber, count: number): WorkshopQuestion[] {
         },
       },
     };
-  });
+  }, avoid);
 }
 
 const MASS_ITEMS: BilingualText[] = [
@@ -1270,18 +1418,22 @@ const MASS_ITEMS: BilingualText[] = [
   { en: 'Olives', ar: 'زيتون' },
 ];
 
-function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
+function genMass(level: LevelNumber, count: number, avoid?: Set<string>): WorkshopQuestion[] {
   return generateUniqueList<WorkshopQuestion>(count, (i) => {
     const itemA = pickOne(MASS_ITEMS);
     let itemB = pickOne(MASS_ITEMS);
     if (itemB.en === itemA.en) itemB = MASS_ITEMS[(MASS_ITEMS.indexOf(itemA) + 1) % MASS_ITEMS.length];
 
     if (level === 1) {
-      const leftG = randInt(2, 9) * 100;
-      const rightG = randInt(2, 9) * 100;
+      const leftG = randInt(1, 9) * 100;
+      const rightG = randInt(1, 9) * 100;
       const correctIndex = leftG > rightG ? 0 : rightG > leftG ? 1 : 2;
+      const prompt = {
+        en: 'Which pan is heavier on the balance scale?',
+        ar: 'أي الكفتين أثقل على الميزان؟',
+      };
       return {
-        signature: `mass-1-${leftG}-${rightG}`,
+        signature: `mass:${leftG}:${rightG}:${prompt.en}`,
         item: {
           id: uid('mass', i),
           kind: 'mass_or_unit',
@@ -1289,10 +1441,7 @@ function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
           rightLabel: { en: `${rightG} g ${itemB.en}`, ar: `${rightG} جم ${itemB.ar}` },
           leftWeightGrams: leftG,
           rightWeightGrams: rightG,
-          prompt: {
-            en: 'Which pan is heavier on the balance scale?',
-            ar: 'أي الكفتين أثقل على الميزان؟',
-          },
+          prompt,
           options: [
             { en: `${leftG} g ${itemA.en}`, ar: `${leftG} جم ${itemA.ar}` },
             { en: `${rightG} g ${itemB.en}`, ar: `${rightG} جم ${itemB.ar}` },
@@ -1308,13 +1457,21 @@ function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
     }
 
     if (level === 2 || level === 4) {
-      const kgCount = level === 2 ? 1 : randInt(1, 3);
+      const kgCount = level === 2 ? 1 : randInt(1, 4);
       const kgInGrams = kgCount * 1000;
       const gramsSide =
         level === 2
-          ? pickOne([450, 650, 800, 1000, 1200, 1350])
-          : pickOne([kgInGrams - 350, kgInGrams - 150, kgInGrams, kgInGrams + 250, kgInGrams + 500]);
-      const kgOnLeft = Math.random() < 0.5;
+          ? pickOne([350, 450, 650, 800, 900, 1000, 1150, 1200, 1350, 1500])
+          : pickOne([
+              kgInGrams - 450,
+              kgInGrams - 350,
+              kgInGrams - 150,
+              kgInGrams,
+              kgInGrams + 250,
+              kgInGrams + 500,
+              kgInGrams + 750,
+            ]);
+      const kgOnLeft = nextRandom() < 0.5;
       const leftG = kgOnLeft ? kgInGrams : gramsSide;
       const rightG = kgOnLeft ? gramsSide : kgInGrams;
       const leftLabel = kgOnLeft
@@ -1324,9 +1481,13 @@ function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
         ? { en: `${gramsSide} g ${itemB.en}`, ar: `${gramsSide} جم ${itemB.ar}` }
         : { en: `${kgCount} kg ${itemB.en}`, ar: `${kgCount} كجم ${itemB.ar}` };
       const correctIndex = leftG > rightG ? 0 : rightG > leftG ? 1 : 2;
+      const prompt = {
+        en: 'Which side is heavier? (Remember: 1 kg = 1000 g)',
+        ar: 'أي الكفتين أثقل؟ (تذكر: ١ كجم = ١٠٠٠ جم)',
+      };
 
       return {
-        signature: `mass-kg-${leftG}-${rightG}`,
+        signature: `mass:${leftG}:${rightG}:${prompt.en}`,
         item: {
           id: uid('mass', i),
           kind: 'mass_or_unit',
@@ -1334,10 +1495,7 @@ function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
           rightLabel,
           leftWeightGrams: leftG,
           rightWeightGrams: rightG,
-          prompt: {
-            en: 'Which side is heavier? (Remember: 1 kg = 1000 g)',
-            ar: 'أي الكفتين أثقل؟ (تذكر: ١ كجم = ١٠٠٠ جم)',
-          },
+          prompt,
           options: [
             leftLabel,
             rightLabel,
@@ -1353,27 +1511,30 @@ function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
     }
 
     if (level === 3 || (level === 5 && i % 2 === 0)) {
-      // Find missing grams to balance 1 kg (1000 g) or 2 kg (2000 g)
-      const targetKg = level === 5 ? pickOne([1, 2]) : 1;
+      const targetKg = level === 5 ? pickOne([1, 2, 3]) : 1;
       const targetG = targetKg * 1000;
-      const partA = randInt(2, targetKg * 10 - 2) * 100;
+      const partA =
+        level === 3 ? randInt(1, 19) * 50 : randInt(1, targetKg * 10 - 1) * 100;
       const missing = targetG - partA;
-      const numOpts = buildNumberOptions(missing, [-200, -100, 100, 200, 300], 100);
+      const numOpts = buildNumberOptions(missing, [-200, -100, -50, 50, 100, 200], 50);
       const correctIndex = numOpts.indexOf(missing);
+      const prompt = {
+        en: `How many more grams balance ${targetKg} kg (${targetG} g)?`,
+        ar: `كم جرامًا نضيف ليصبح الميزان متساويًا مع ${targetKg} كجم (${targetG} جم)؟`,
+      };
+      const leftLabel = { en: `${partA} g + ? g`, ar: `${partA} جم + ؟ جم` };
+      const rightLabel = { en: `${targetKg} kg`, ar: `${targetKg} كجم` };
 
       return {
-        signature: `mass-fill-${targetG}-${partA}`,
+        signature: `mass:${targetG}:${targetG}:${leftLabel.en}:${rightLabel.en}:${prompt.en}`,
         item: {
           id: uid('mass', i),
           kind: 'mass_or_unit',
-          leftLabel: { en: `${partA} g + ? g`, ar: `${partA} جم + ؟ جم` },
-          rightLabel: { en: `${targetKg} kg`, ar: `${targetKg} كجم` },
+          leftLabel,
+          rightLabel,
           leftWeightGrams: targetG,
           rightWeightGrams: targetG,
-          prompt: {
-            en: `How many more grams balance ${targetKg} kg (${targetG} g)?`,
-            ar: `كم جرامًا نضيف ليصبح الميزان متساويًا مع ${targetKg} كجم (${targetG} جم)؟`,
-          },
+          prompt,
           options: numOpts.map((n) => ({ en: `${n} g`, ar: `${n} جم` })),
           correctIndex,
           hint: {
@@ -1384,9 +1545,20 @@ function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
       };
     }
 
-    // Level 5 odd rounds: procedural sum of two gram weights in kg or g
-    const a = pickOne([500, 250, 750, 1000]);
-    const b = a === 250 ? 750 : a === 750 ? 250 : a;
+    // Level 5 odd rounds: procedural sum of two gram weights in kg
+    const pair = pickOne([
+      [500, 500],
+      [250, 750],
+      [750, 250],
+      [600, 400],
+      [300, 700],
+      [800, 200],
+      [1000, 1000],
+      [1500, 500],
+      [1250, 750],
+      [1000, 2000],
+    ] as const);
+    const [a, b] = pair;
     const totalKg = (a + b) / 1000;
     const opts = shuffle([
       { val: totalKg, label: { en: `${totalKg} kg`, ar: `${totalKg} كجم` } },
@@ -1394,9 +1566,13 @@ function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
       { val: totalKg + 2, label: { en: `${totalKg + 2} kg`, ar: `${totalKg + 2} كجم` } },
     ]);
     const correctIndex = opts.findIndex((o) => o.val === totalKg);
+    const prompt = {
+      en: `${a} g + ${b} g equals how many kilograms?`,
+      ar: `${a} جم + ${b} جم تساوي كم كيلوجرام؟`,
+    };
 
     return {
-      signature: `mass-sum-${a}-${b}`,
+      signature: `mass:${a + b}:${a + b}:${prompt.en}`,
       item: {
         id: uid('mass', i),
         kind: 'mass_or_unit',
@@ -1404,10 +1580,7 @@ function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
         rightLabel: { en: `? kg`, ar: `؟ كجم` },
         leftWeightGrams: a + b,
         rightWeightGrams: a + b,
-        prompt: {
-          en: `${a} g + ${b} g equals how many kilograms?`,
-          ar: `${a} جم + ${b} جم تساوي كم كيلوجرام؟`,
-        },
+        prompt,
         options: opts.map((o) => o.label),
         correctIndex,
         hint: {
@@ -1416,7 +1589,7 @@ function genMass(level: LevelNumber, count: number): WorkshopQuestion[] {
         },
       },
     };
-  });
+  }, avoid);
 }
 
 interface ShapeSpec {
@@ -1438,20 +1611,34 @@ const ALL_SHAPES: ShapeSpec[] = [
   { kind: 'pyramid', name: { en: 'Pyramid', ar: 'هرم' }, is3D: true, sidesOrFaces: 5, vertices: 5 },
 ];
 
-function genShapes(level: LevelNumber, count: number): WorkshopQuestion[] {
+function genShapes(level: LevelNumber, count: number, avoid?: Set<string>): WorkshopQuestion[] {
   return generateUniqueList<WorkshopQuestion>(count, (i) => {
     const shapes2D = ALL_SHAPES.filter((s) => !s.is3D);
     const shapes3D = ALL_SHAPES.filter((s) => s.is3D);
 
-    if (level === 1 || level === 3) {
-      const pool = level === 1 ? shapes2D : shapes3D;
+    const askName =
+      (level === 1 && i < 4) ||
+      (level === 3 && i < 3) ||
+      (level === 5 && i % 3 === 0);
+
+    if (askName) {
+      const pool = level === 1 ? shapes2D : level === 3 ? shapes3D : ALL_SHAPES;
       const target = pickOne(pool);
       const others = shuffle(ALL_SHAPES.filter((s) => s.kind !== target.kind)).slice(0, 3);
       const opts = shuffle([target, ...others]);
       const correctIndex = opts.findIndex((o) => o.kind === target.kind);
+      const prompt = target.is3D
+        ? pickOne([
+            { en: 'What is the name of this 3D solid shape?', ar: 'ما اسم هذا المجسم ثلاثي الأبعاد؟' },
+            { en: 'Identify this Egyptian 3D solid', ar: 'تعرّف على هذا المجسم الهندسي' },
+          ])
+        : pickOne([
+            { en: 'What is the name of this 2D shape?', ar: 'ما اسم هذا الشكل الهندسي؟' },
+            { en: 'Identify this flat 2D polygon', ar: 'تعرّف على هذا الشكل الهندسي المسطح' },
+          ]);
 
       return {
-        signature: `shp-name-${target.kind}-${i % 2}`,
+        signature: `shp:${target.kind}:${prompt.en}`,
         item: {
           id: uid('shp', i),
           kind: 'fraction_or_shape',
@@ -1459,10 +1646,7 @@ function genShapes(level: LevelNumber, count: number): WorkshopQuestion[] {
           shape: target.kind,
           options: opts.map((o) => o.name),
           correctIndex,
-          prompt: {
-            en: level === 1 ? 'What is the name of this 2D shape?' : 'What is the name of this 3D solid shape?',
-            ar: level === 1 ? 'ما اسم هذا الشكل الهندسي؟' : 'ما اسم هذا المجسم ثلاثي الأبعاد؟',
-          },
+          prompt,
           hint: {
             en: target.is3D
               ? `This 3D solid has ${target.sidesOrFaces} flat faces!`
@@ -1475,18 +1659,22 @@ function genShapes(level: LevelNumber, count: number): WorkshopQuestion[] {
       };
     }
 
-    const pool = level === 2 ? shapes2D : level === 4 ? shapes3D : ALL_SHAPES;
+    const pool = level === 1 || level === 2 ? shapes2D : level === 3 || level === 4 ? shapes3D : ALL_SHAPES;
     const target = pickOne(pool);
-    const askVertices = level === 5 && Math.random() < 0.45;
+    const askVertices = nextRandom() < 0.45;
     const answerNum = askVertices ? target.vertices : target.sidesOrFaces;
     const numOpts = buildNumberOptions(answerNum, [-2, -1, 1, 2, 3], 0);
     const correctIndex = numOpts.indexOf(answerNum);
 
     const unitEn = askVertices ? 'vertices' : target.is3D ? 'flat faces' : 'sides';
     const unitAr = askVertices ? 'رؤوس' : target.is3D ? 'أوجه' : 'أضلاع';
+    const prompt = {
+      en: `How many ${unitEn} does this ${target.name.en} have?`,
+      ar: `كم عدد ${unitAr} هذا ${target.name.ar}؟`,
+    };
 
     return {
-      signature: `shp-attr-${target.kind}-${askVertices ? 'v' : 's'}`,
+      signature: `shp:${target.kind}:${prompt.en}`,
       item: {
         id: uid('shp', i),
         kind: 'fraction_or_shape',
@@ -1494,17 +1682,14 @@ function genShapes(level: LevelNumber, count: number): WorkshopQuestion[] {
         shape: target.kind,
         options: numOpts.map((n) => ({ en: `${n} ${unitEn}`, ar: `${n} ${unitAr}` })),
         correctIndex,
-        prompt: {
-          en: `How many ${unitEn} does this ${target.name.en} have?`,
-          ar: `كم عدد ${unitAr} هذا ${target.name.ar}؟`,
-        },
+        prompt,
         hint: {
-          en: `Tap Hint to inspect: a ${target.name.en} has ${answerNum} ${unitEn}!`,
+          en: `A ${target.name.en} has ${answerNum} ${unitEn}!`,
           ar: `عدد ${unitAr} ${target.name.ar} هو ${answerNum}!`,
         },
       },
     };
-  });
+  }, avoid);
 }
 
 function fractionName(num: number, den: number): BilingualText {
@@ -1531,14 +1716,19 @@ function fractionName(num: number, den: number): BilingualText {
   };
 }
 
-function genFractions(level: LevelNumber, count: number): WorkshopQuestion[] {
+function genFractions(level: LevelNumber, count: number, avoid?: Set<string>): WorkshopQuestion[] {
   const denPool: Record<LevelNumber, number[]> = {
-    1: [2, 4],
-    2: [3, 4],
-    3: [5, 6],
-    4: [8],
+    1: [2, 3, 4],
+    2: [3, 4, 5],
+    3: [4, 5, 6],
+    4: [6, 8],
     5: [2, 3, 4, 5, 6, 8],
   };
+
+  const prompts: BilingualText[] = [
+    { en: 'What fraction of the circle is shaded?', ar: 'ما الكسر الذي يمثل الجزء المظلل من الدائرة؟' },
+    { en: 'Which fraction matches the colored slices?', ar: 'أي كسر يطابق الأجزاء الملونة؟' },
+  ];
 
   return generateUniqueList<WorkshopQuestion>(count, (i) => {
     const den = pickOne(denPool[level]);
@@ -1547,7 +1737,7 @@ function genFractions(level: LevelNumber, count: number): WorkshopQuestion[] {
 
     const distractorKeys = new Set<string>([ansKey]);
     let safety = 0;
-    while (distractorKeys.size < 4 && safety < 50) {
+    while (distractorKeys.size < 4 && safety < 80) {
       safety++;
       const dDen = pickOne([2, 3, 4, 5, 6, 8]);
       const dNum = randInt(1, dDen - 1);
@@ -1558,9 +1748,10 @@ function genFractions(level: LevelNumber, count: number): WorkshopQuestion[] {
     }
     const keys = shuffle(Array.from(distractorKeys));
     const correctIndex = keys.indexOf(ansKey);
+    const prompt = pickOne(prompts);
 
     return {
-      signature: `frac-${num}-${den}`,
+      signature: `frac:${num}/${den}:${prompt.en}`,
       item: {
         id: uid('frac', i),
         kind: 'fraction_or_shape',
@@ -1572,17 +1763,14 @@ function genFractions(level: LevelNumber, count: number): WorkshopQuestion[] {
           return fractionName(n, d);
         }),
         correctIndex,
-        prompt: {
-          en: 'What fraction of the circle is shaded?',
-          ar: 'ما الكسر الذي يمثل الجزء المظلل من الدائرة؟',
-        },
+        prompt,
         hint: {
           en: `${num} shaded out of ${den} equal parts = ${num}/${den}!`,
           ar: `${num} جزء مظلل من إجمالي ${den} أجزاء متساوية = ${num}/${den}!`,
         },
       },
     };
-  });
+  }, avoid);
 }
 
 const GRAPH_CATEGORIES: { label: BilingualText; color: string }[][] = [
@@ -1596,14 +1784,30 @@ const GRAPH_CATEGORIES: { label: BilingualText; color: string }[][] = [
     { label: { en: 'Camels', ar: 'جمال' }, color: '#D97706' },
     { label: { en: 'Lanterns', ar: 'فوانيس' }, color: '#0D9488' },
   ],
+  [
+    { label: { en: 'Lotus', ar: 'لوتس' }, color: '#EC4899' },
+    { label: { en: 'Papyrus', ar: 'بردي' }, color: '#16A34A' },
+    { label: { en: 'Palms', ar: 'نخيل' }, color: '#0F766E' },
+  ],
+  [
+    { label: { en: 'Scarabs', ar: 'جعارين' }, color: '#0891B2' },
+    { label: { en: 'Falcons', ar: 'صقور' }, color: '#D97706' },
+    { label: { en: 'Cats', ar: 'قطط' }, color: '#7C3AED' },
+  ],
+  [
+    { label: { en: 'Pots', ar: 'أواني' }, color: '#C2410C' },
+    { label: { en: 'Baskets', ar: 'سلال' }, color: '#CA8A04' },
+    { label: { en: 'Rugs', ar: 'سجاد' }, color: '#BE123C' },
+  ],
 ];
 
-function genGraphs(level: LevelNumber, count: number): WorkshopQuestion[] {
+function genGraphs(level: LevelNumber, count: number, avoid?: Set<string>): WorkshopQuestion[] {
   return generateUniqueList<WorkshopQuestion>(count, (i) => {
     const palette = pickOne(GRAPH_CATEGORIES);
     // Pick 3 strictly distinct counts so max/min are always unambiguous!
     const nums = shuffle([2, 3, 4, 5, 6, 7, 8, 9]).slice(0, 3);
     const bars = palette.map((p, idx) => ({ ...p, count: nums[idx] }));
+    const barSig = bars.map((b) => `${b.label.en}=${b.count}`).join(',');
 
     const mode =
       level === 1
@@ -1623,9 +1827,19 @@ function genGraphs(level: LevelNumber, count: number): WorkshopQuestion[] {
       const winner = sorted[0];
       const opts = shuffle(bars);
       const correctIndex = opts.findIndex((b) => b.label.en === winner.label.en);
+      const prompt =
+        mode === 'most'
+          ? {
+              en: 'Which item has the MOST on the bar graph?',
+              ar: 'أي عمود يمثل العدد الأكثر في الرسم البياني؟',
+            }
+          : {
+              en: 'Which item has the LEAST on the bar graph?',
+              ar: 'أي عمود يمثل العدد الأقل في الرسم البياني؟',
+            };
 
       return {
-        signature: `gr-${mode}-${nums.join('-')}`,
+        signature: `gr:${barSig}:${prompt.en}`,
         item: {
           id: uid('gr', i),
           kind: 'fraction_or_shape',
@@ -1636,16 +1850,7 @@ function genGraphs(level: LevelNumber, count: number): WorkshopQuestion[] {
             ar: `${b.label.ar} (${b.count})`,
           })),
           correctIndex,
-          prompt:
-            mode === 'most'
-              ? {
-                  en: 'Which item has the MOST on the bar graph?',
-                  ar: 'أي عمود يمثل العدد الأكثر في الرسم البياني؟',
-                }
-              : {
-                  en: 'Which item has the LEAST on the bar graph?',
-                  ar: 'أي عمود يمثل العدد الأقل في الرسم البياني؟',
-                },
+          prompt,
           hint:
             mode === 'most'
               ? {
@@ -1667,9 +1872,13 @@ function genGraphs(level: LevelNumber, count: number): WorkshopQuestion[] {
       const diff = bigger.count - smaller.count;
       const numOpts = buildNumberOptions(diff, [-2, -1, 1, 2, 3], 1);
       const correctIndex = numOpts.indexOf(diff);
+      const prompt = {
+        en: `How many more ${bigger.label.en} than ${smaller.label.en} are shown?`,
+        ar: `بكم يزيد ${bigger.label.ar} عن ${smaller.label.ar} في الرسم البياني؟`,
+      };
 
       return {
-        signature: `gr-diff-${bigger.count}-${smaller.count}-${bigger.label.en}`,
+        signature: `gr:${barSig}:${prompt.en}`,
         item: {
           id: uid('gr', i),
           kind: 'fraction_or_shape',
@@ -1677,10 +1886,7 @@ function genGraphs(level: LevelNumber, count: number): WorkshopQuestion[] {
           graphBars: bars,
           options: numOpts.map((n) => ({ en: `${n}`, ar: `${n}` })),
           correctIndex,
-          prompt: {
-            en: `How many more ${bigger.label.en} than ${smaller.label.en} are shown?`,
-            ar: `بكم يزيد ${bigger.label.ar} عن ${smaller.label.ar} في الرسم البياني؟`,
-          },
+          prompt,
           hint: {
             en: `Subtract the smaller bar from the larger bar: ${bigger.count} − ${smaller.count}!`,
             ar: `اطرح العمود الأصغر من الأكبر: ${bigger.count} − ${smaller.count}!`,
@@ -1692,9 +1898,13 @@ function genGraphs(level: LevelNumber, count: number): WorkshopQuestion[] {
     const total = bars.reduce((s, b) => s + b.count, 0);
     const numOpts = buildNumberOptions(total, [-3, -2, -1, 1, 2, 3], 3);
     const correctIndex = numOpts.indexOf(total);
+    const prompt = {
+      en: 'How many items are shown altogether on the bar graph?',
+      ar: 'كم إجمالي العناصر معًا في الرسم البياني؟',
+    };
 
     return {
-      signature: `gr-tot-${nums.join('-')}`,
+      signature: `gr:${barSig}:${prompt.en}`,
       item: {
         id: uid('gr', i),
         kind: 'fraction_or_shape',
@@ -1702,54 +1912,81 @@ function genGraphs(level: LevelNumber, count: number): WorkshopQuestion[] {
         graphBars: bars,
         options: numOpts.map((n) => ({ en: `${n}`, ar: `${n}` })),
         correctIndex,
-        prompt: {
-          en: 'How many items are shown altogether on the bar graph?',
-          ar: 'كم إجمالي العناصر معًا في الرسم البياني؟',
-        },
+        prompt,
         hint: {
           en: `Add all three bars: ${bars.map((b) => b.count).join(' + ')}!`,
           ar: `اجمع الأعمدة الثلاثة: ${bars.map((b) => b.count).join(' + ')}!`,
         },
       },
     };
-  });
+  }, avoid);
 }
 
 /* ============================================================================
    UNIFIED PROCEDURAL EXAM GENERATOR (CALLED ON EVERY GAME START & REPLAY)
    ============================================================================ */
+export interface GenerateQuestionsOptions {
+  avoidSignatures?: Set<string>;
+  recordHistory?: boolean;
+}
+
 export function generateSubjectQuestions(
   subjectId: SubjectId,
   levelNumber: LevelNumber,
-  count: number
+  count: number,
+  options?: GenerateQuestionsOptions
 ): ActiveQuestion[] {
+  const avoid = options?.avoidSignatures
+    ? new Set<string>(options.avoidSignatures)
+    : getCombinedSeenSignatures();
+
+  let generated: ActiveQuestion[];
   switch (subjectId) {
     case 'place_value':
-      return genPlaceValue(levelNumber, count).map((data) => ({ stage: 'bazaar', data }));
+      generated = genPlaceValue(levelNumber, count, avoid).map((data) => ({ stage: 'bazaar', data }));
+      break;
     case 'money':
-      return genMoney(levelNumber, count).map((data) => ({ stage: 'bazaar', data }));
+      generated = genMoney(levelNumber, count, avoid).map((data) => ({ stage: 'bazaar', data }));
+      break;
     case 'vertical_math':
-      return genVerticalMath(levelNumber, count).map((data) => ({ stage: 'nile', data }));
+      generated = genVerticalMath(levelNumber, count, avoid).map((data) => ({ stage: 'nile', data }));
+      break;
     case 'arrays':
-      return genArrays(levelNumber, count).map((data) => ({ stage: 'nile', data }));
+      generated = genArrays(levelNumber, count, avoid).map((data) => ({ stage: 'nile', data }));
+      break;
     case 'clock':
-      return genClock(levelNumber, count).map((data) => ({ stage: 'clock', data }));
+      generated = genClock(levelNumber, count, avoid).map((data) => ({ stage: 'clock', data }));
+      break;
     case 'calendar':
-      return genCalendar(levelNumber, count).map((data) => ({ stage: 'clock', data }));
+      generated = genCalendar(levelNumber, count, avoid).map((data) => ({ stage: 'clock', data }));
+      break;
     case 'length':
-      return genLength(levelNumber, count).map((data) => ({ stage: 'workshop', data }));
+      generated = genLength(levelNumber, count, avoid).map((data) => ({ stage: 'workshop', data }));
+      break;
     case 'capacity':
-      return genCapacity(levelNumber, count).map((data) => ({ stage: 'workshop', data }));
+      generated = genCapacity(levelNumber, count, avoid).map((data) => ({ stage: 'workshop', data }));
+      break;
     case 'mass':
-      return genMass(levelNumber, count).map((data) => ({ stage: 'workshop', data }));
+      generated = genMass(levelNumber, count, avoid).map((data) => ({ stage: 'workshop', data }));
+      break;
     case 'shapes':
-      return genShapes(levelNumber, count).map((data) => ({ stage: 'workshop', data }));
+      generated = genShapes(levelNumber, count, avoid).map((data) => ({ stage: 'workshop', data }));
+      break;
     case 'fractions':
-      return genFractions(levelNumber, count).map((data) => ({ stage: 'workshop', data }));
+      generated = genFractions(levelNumber, count, avoid).map((data) => ({ stage: 'workshop', data }));
+      break;
     case 'graphs':
-      return genGraphs(levelNumber, count).map((data) => ({ stage: 'workshop', data }));
+      generated = genGraphs(levelNumber, count, avoid).map((data) => ({ stage: 'workshop', data }));
+      break;
   }
+
+  if (options?.recordHistory !== false) {
+    recordSeenQuestions(generated);
+  }
+  return generated;
 }
+
+export { getQuestionSignature };
 
 export function getQuestionSkillKey(question: ActiveQuestion): string {
   const { data } = question;

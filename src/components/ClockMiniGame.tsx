@@ -3,8 +3,10 @@ import { AlertCircle, ArrowRight, Calendar, Check, Lightbulb, Moon, Sun } from '
 import { t, UI_TEXT } from '../data/i18n';
 import { usePausableTimer } from '../hooks/usePausableTimer';
 import { BilingualText, ClockQuestion, Language, RoundAdvancePayload } from '../types/game';
+import egyptClocktowerBg from '../assets/images/egypt_clocktower_bg.webp';
 import { soundEngine } from '../utils/sound';
 import { AnalogClockSvg } from './EgyptSvgs';
+import { ReadAloudButton } from './ReadAloudButton';
 
 interface ClockMiniGameProps {
   question: ClockQuestion;
@@ -193,9 +195,8 @@ export const ClockMiniGame: React.FC<ClockMiniGameProps> = ({
         aria-hidden="true"
       >
         <img
-          src="/src/assets/images/egypt_clocktower_bg_1794872911604.jpg"
-          alt="Sunlit Egyptian oasis clocktower courtyard"
-          referrerPolicy="no-referrer"
+          src={egyptClocktowerBg}
+          alt=""
           className="w-full h-full object-cover opacity-90"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-white/20 via-transparent to-black/25" />
@@ -203,10 +204,11 @@ export const ClockMiniGame: React.FC<ClockMiniGameProps> = ({
 
       {/* Zone 1: Top Prompt */}
       <div className="relative z-10 pt-16 sm:pt-17 px-3 sm:px-4 flex justify-center shrink-0">
-        <div className="bg-[#FFFDF7] border-2 border-[#133C3B] rounded-2xl px-4 sm:px-6 py-2.5 sm:py-3 shadow-md text-center max-w-2xl w-full">
-          <h2 className="font-display text-lg sm:text-2xl font-bold text-[#133C3B] leading-snug">
+        <div className="bg-[#FFFDF7] border-2 border-[#133C3B] rounded-2xl px-3.5 sm:px-6 py-2.5 sm:py-3 shadow-md max-w-2xl w-full flex items-center justify-between gap-2.5">
+          <h2 className="font-display text-lg sm:text-2xl font-bold text-[#133C3B] leading-snug text-center flex-1">
             {t(question.prompt, lang)}
           </h2>
+          <ReadAloudButton text={t(question.prompt, lang)} lang={lang} disabled={isPaused} compact />
         </div>
       </div>
 
@@ -214,7 +216,13 @@ export const ClockMiniGame: React.FC<ClockMiniGameProps> = ({
       <div className="relative z-10 flex-1 min-h-0 overflow-y-auto flex items-center justify-center px-3 sm:px-4 py-2">
         {question.kind === 'read_clock' && (
           <div className="bg-[#FFFDF7]/95 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-6 shadow-xl flex flex-col items-center gap-2.5">
-            <AnalogClockSvg hour={question.hour} minute={question.minute} size={196} />
+            <AnalogClockSvg
+              hour={question.hour}
+              minute={question.minute}
+              size={196}
+              lang={lang}
+              hideExactTime
+            />
             <div className="flex items-center gap-2 text-sm font-bold text-[#133C3B]">
               {question.dayPeriod === 'am' ? (
                 <>
@@ -233,7 +241,7 @@ export const ClockMiniGame: React.FC<ClockMiniGameProps> = ({
 
         {question.kind === 'set_clock' && (
           <div className="bg-[#FFFDF7]/95 border-2 border-[#133C3B] rounded-3xl p-4 sm:p-6 shadow-xl flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
-            <AnalogClockSvg hour={setHour} minute={setMinute} size={184} />
+            <AnalogClockSvg hour={setHour} minute={setMinute} size={184} lang={lang} />
 
             <div className="flex flex-col items-center gap-2.5">
               <div

@@ -524,6 +524,19 @@ class SoundEngine {
       this.playTone(freq, 0.72, 'sine', 0.11, chordDelay);
     });
   }
+
+  // Short cheerful sparkle chime when the character celebrates a correct answer
+  public playCheer() {
+    this.playTone(587.33, 0.12, 'triangle', 0.15, 0);
+    this.playTone(783.99, 0.14, 'triangle', 0.16, 0.07);
+    this.playTone(1046.5, 0.22, 'sine', 0.18, 0.14);
+  }
+
+  // Soft comforting chime when the character reacts sympathetically to a wrong answer
+  public playEncourage() {
+    this.playTone(329.63, 0.16, 'sine', 0.1, 0);
+    this.playTone(293.66, 0.2, 'sine', 0.09, 0.1);
+  }
 }
 
 export const soundEngine = new SoundEngine();

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useRef } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
@@ -16,84 +16,11 @@ import {
 } from 'lucide-react';
 import { EGYPT_STICKERS } from '../data/egyptLevels';
 import { t, UI_TEXT } from '../data/i18n';
+import { useModalFocusTrap } from '../hooks/useModalFocusTrap';
 import { Language, LevelConfig, RoundResult } from '../types/game';
 import { EgyptStickerSvg } from './EgyptSvgs';
 
-const FOCUSABLE_SELECTOR =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-/**
- * Traps keyboard focus inside an active modal dialog and restores focus
- * to the previously focused element when the modal unmounts.
- */
-export function useModalFocusTrap(
-  containerRef: React.RefObject<HTMLElement | null>,
-  active = true,
-  onEscape?: () => void
-) {
-  const onEscapeRef = useRef(onEscape);
-  onEscapeRef.current = onEscape;
-
-  useEffect(() => {
-    if (!active) return;
-
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-
-    const container = containerRef.current;
-    if (container) {
-      const focusables = Array.from(
-        container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
-      );
-      if (focusables.length > 0) {
-        focusables[0].focus();
-      } else {
-        container.focus();
-      }
-    }
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && onEscapeRef.current) {
-        e.preventDefault();
-        e.stopPropagation();
-        onEscapeRef.current();
-        return;
-      }
-
-      if (e.key !== 'Tab' || !containerRef.current) return;
-
-      const focusables = Array.from(
-        containerRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
-      );
-      if (focusables.length === 0) {
-        e.preventDefault();
-        return;
-      }
-
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      const current = document.activeElement;
-
-      if (e.shiftKey) {
-        if (current === first || !containerRef.current.contains(current)) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else if (current === last || !containerRef.current.contains(current)) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown, true);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown, true);
-      if (previouslyFocused && previouslyFocused.isConnected) {
-        previouslyFocused.focus();
-      }
-    };
-  }, [active, containerRef]);
-}
+export { useModalFocusTrap };
 
 interface PauseModalProps {
   level: LevelConfig;
@@ -281,7 +208,11 @@ export const RoundSummaryModal: React.FC<RoundSummaryModalProps> = ({
 
         <div
           className="flex items-center justify-center gap-3"
-          aria-label={`Earned ${result.starsEarned} of 3 stars`}
+          aria-label={
+            lang === 'ar'
+              ? `حصلت على ${result.starsEarned} من 3 نجوم`
+              : `Earned ${result.starsEarned} of 3 stars`
+          }
         >
           {[1, 2, 3].map((n) => (
             <Star

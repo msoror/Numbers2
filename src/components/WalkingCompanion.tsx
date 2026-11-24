@@ -273,8 +273,36 @@ function getScreenGuideTips(
           ar: 'عمل رائع! جرّب المرحلة التالية أو العب مرة أخرى بأرقام جديدة تمامًا!',
         },
       ];
+    case 'PLACEMENT_EXAM':
+      return [];
   }
 }
+
+export type CharacterMood = 'neutral' | 'happy' | 'sad';
+
+const HAPPY_REACTION_MESSAGES: BilingualText[] = [
+  { en: 'Woohoo! Spot on!', ar: 'رائع! إجابة ممتازة!' },
+  { en: 'Brilliant math thinking!', ar: 'تفكير رياضي مذهل!' },
+  { en: 'You nailed it, superstar!', ar: 'أحسنت يا نجم الرياضيات!' },
+  { en: 'Nile Champion move!', ar: 'خطوة بطل من أبطال النيل!' },
+  { en: 'Yes! Golden answer!', ar: 'نعم! إجابة ذهبية!' },
+  { en: 'Awesome! Keep shining!', ar: 'ممتاز! واصل التألق!' },
+  { en: 'High five! So clever!', ar: 'مذهل! ذكاء خارق!' },
+  { en: 'Bullseye! Way to go!', ar: 'أصبت الهدف! عمل رائع!' },
+  { en: 'Super sharp! Love it!', ar: 'سريع وذكي جدًا!' },
+  { en: 'Fantastic work, explorer!', ar: 'عمل رائع يا مستكشف!' },
+];
+
+const ENCOURAGE_REACTION_MESSAGES: BilingualText[] = [
+  { en: 'Try again, you can do it!', ar: 'حاول مرة أخرى، أنت تستطيع!' },
+  { en: 'Almost! Give it another look!', ar: 'اقتربت! ألقِ نظرة أخرى!' },
+  { en: 'No worries — every try helps you grow!', ar: 'لا بأس — كل محاولة تجعلك أقوى!' },
+  { en: 'You are so close! Check the clue!', ar: 'أنت قريب جدًا! انظر إلى التلميح!' },
+  { en: 'Keep going, explorer — you got this!', ar: 'واصل يا بطل — أنت قادر عليها!' },
+  { en: 'Good effort! Try one more time!', ar: 'مجهود جميل! جرّب مرة أخرى!' },
+  { en: 'Mistakes help brains sparkle — try again!', ar: 'الأخطاء تساعدنا على التعلم — حاول مجددًا!' },
+  { en: 'Take a breath and try the next choice!', ar: 'خذ نفسًا واختَر مرة أخرى بهدوء!' },
+];
 
 /* ============================================================================
    SPARKLE TRAIL EFFECTS BEHIND WALKING CHARACTER
@@ -411,10 +439,12 @@ const WalkingSparkleTrail: React.FC<{
 export const NileCrocodileSvg: React.FC<{
   isWalking: boolean;
   isHappy: boolean;
+  mood?: CharacterMood;
   cosmetics: EquippedCosmetics;
   size?: number;
-}> = ({ isWalking, isHappy, cosmetics, size = 142 }) => {
+}> = ({ isWalking, isHappy, mood = 'neutral', cosmetics, size = 142 }) => {
   const height = Math.round((size * 102) / 118);
+  const effectiveMood: CharacterMood = mood !== 'neutral' ? mood : isHappy ? 'happy' : 'neutral';
   return (
     <svg
       width={size}
@@ -548,16 +578,32 @@ export const NileCrocodileSvg: React.FC<{
       />
       <path d="M72 48 C83 51 96 50 104 45" stroke="#FEF3C7" strokeWidth="3.2" strokeLinecap="round" />
 
-      {/* Cute Rounded Friendly Teeth & Happy Smile */}
-      <path
-        d="M73 45 C82 49 95 48 104 43"
-        stroke="#133C3B"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <path d="M84 46.5 L86.5 51 L89 46.8" fill="#FFFFFF" stroke="#133C3B" strokeWidth="1.6" strokeLinejoin="round" />
-      <path d="M94 46 L96.2 50 L98.5 45.2" fill="#FFFFFF" stroke="#133C3B" strokeWidth="1.6" strokeLinejoin="round" />
+      {/* Cute Rounded Friendly Teeth & Expressive Mouth */}
+      {effectiveMood === 'sad' ? (
+        <path
+          d="M75 49 C84 44 94 44 102 48"
+          stroke="#133C3B"
+          strokeWidth="2.6"
+          strokeLinecap="round"
+          fill="none"
+        />
+      ) : (
+        <>
+          <path
+            d={
+              effectiveMood === 'happy'
+                ? 'M72 44 C82 51 96 50 105 42'
+                : 'M73 45 C82 49 95 48 104 43'
+            }
+            stroke="#133C3B"
+            strokeWidth="2.6"
+            strokeLinecap="round"
+            fill="none"
+          />
+          <path d="M84 46.5 L86.5 51 L89 46.8" fill="#FFFFFF" stroke="#133C3B" strokeWidth="1.6" strokeLinejoin="round" />
+          <path d="M94 46 L96.2 50 L98.5 45.2" fill="#FFFFFF" stroke="#133C3B" strokeWidth="1.6" strokeLinejoin="round" />
+        </>
+      )}
 
       {/* Little Snout Nostril */}
       <circle cx="101" cy="37.5" r="1.8" fill="#133C3B" />
@@ -565,10 +611,27 @@ export const NileCrocodileSvg: React.FC<{
       {/* Big Friendly Crocodile Eyes */}
       <circle cx="72" cy="27" r="6.5" fill="#10B981" stroke="#133C3B" strokeWidth="2.6" />
       <circle cx="81" cy="28" r="6.8" fill="#FFFFFF" stroke="#133C3B" strokeWidth="2.6" />
-      <g className="animate-fennec-blink">
-        <circle cx="82.5" cy="28" r="3.4" fill="#133C3B" />
-        <circle cx="83.7" cy="26.7" r="1.2" fill="#FFFFFF" />
-      </g>
+      {effectiveMood === 'happy' ? (
+        <path
+          d="M77.5 29 C79.5 25.5 83.2 25.5 85.2 29"
+          stroke="#133C3B"
+          strokeWidth="2.6"
+          strokeLinecap="round"
+          fill="none"
+        />
+      ) : effectiveMood === 'sad' ? (
+        <g>
+          <circle cx="81.8" cy="29.4" r="3.1" fill="#133C3B" />
+          <circle cx="82.8" cy="28.3" r="1.1" fill="#FFFFFF" />
+          <path d="M76 23.2 L84 21.5" stroke="#133C3B" strokeWidth="2.2" strokeLinecap="round" />
+          <path d="M85.5 34 C87.5 36.8 87.5 39 85.5 39.8 C83.5 39 83.5 36.8 85.5 34 Z" fill="#38BDF8" />
+        </g>
+      ) : (
+        <g className="animate-fennec-blink">
+          <circle cx="82.5" cy="28" r="3.4" fill="#133C3B" />
+          <circle cx="83.7" cy="26.7" r="1.2" fill="#FFFFFF" />
+        </g>
+      )}
 
       {/* Default Sun Headband (hidden when Golden Crown is worn) */}
       {cosmetics.accessoryId !== 'acc_golden_crown' && (
@@ -623,10 +686,12 @@ export const NileCrocodileSvg: React.FC<{
 export const HorusFalconSvg: React.FC<{
   isWalking: boolean;
   isHappy: boolean;
+  mood?: CharacterMood;
   cosmetics: EquippedCosmetics;
   size?: number;
-}> = ({ isWalking, isHappy, cosmetics, size = 132 }) => {
+}> = ({ isWalking, isHappy, mood = 'neutral', cosmetics, size = 132 }) => {
   const height = Math.round((size * 110) / 108);
+  const effectiveMood: CharacterMood = mood !== 'neutral' ? mood : isHappy ? 'happy' : 'neutral';
   return (
     <svg
       width={size}
@@ -799,12 +864,29 @@ export const HorusFalconSvg: React.FC<{
         strokeLinecap="round"
       />
 
-      {/* Expressive Blinking Falcon Eye */}
-      <g className="animate-fennec-blink">
-        <circle cx="56.5" cy="32.5" r="4.2" fill="#FFFFFF" stroke="#133C3B" strokeWidth="2.2" />
-        <circle cx="57.7" cy="32.5" r="2.2" fill="#133C3B" />
-        <circle cx="58.4" cy="31.5" r="0.9" fill="#FFFFFF" />
-      </g>
+      {/* Expressive Falcon Eye */}
+      {effectiveMood === 'happy' ? (
+        <path
+          d="M53.5 33.2 C55 29.8 58.6 29.8 60.2 33.2"
+          stroke="#133C3B"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          fill="none"
+        />
+      ) : effectiveMood === 'sad' ? (
+        <g>
+          <circle cx="56.5" cy="33" r="4.1" fill="#FFFFFF" stroke="#133C3B" strokeWidth="2.2" />
+          <circle cx="57.2" cy="33.8" r="2.1" fill="#133C3B" />
+          <path d="M52.5 28.4 L59.5 26.8" stroke="#133C3B" strokeWidth="2" strokeLinecap="round" />
+          <path d="M60.2 37.5 C61.8 39.8 61.8 41.6 60.2 42.3 C58.6 41.6 58.6 39.8 60.2 37.5 Z" fill="#38BDF8" />
+        </g>
+      ) : (
+        <g className="animate-fennec-blink">
+          <circle cx="56.5" cy="32.5" r="4.2" fill="#FFFFFF" stroke="#133C3B" strokeWidth="2.2" />
+          <circle cx="57.7" cy="32.5" r="2.2" fill="#133C3B" />
+          <circle cx="58.4" cy="31.5" r="0.9" fill="#FFFFFF" />
+        </g>
+      )}
 
       {/* Golden Curved Falcon Beak */}
       <path
@@ -814,7 +896,16 @@ export const HorusFalconSvg: React.FC<{
         strokeWidth="2.6"
         strokeLinejoin="round"
       />
-      <path d="M65 36.2 C69 37 72 36.6 74 35.4" stroke="#133C3B" strokeWidth="1.8" strokeLinecap="round" />
+      <path
+        d={
+          effectiveMood === 'sad'
+            ? 'M65 37.2 C68.5 35.4 71.5 35.5 74 37.2'
+            : 'M65 36.2 C69 37 72 36.6 74 35.4'
+        }
+        stroke="#133C3B"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
 
       {/* Accessory: Turquoise Ankh Charm */}
       {cosmetics.accessoryId === 'acc_turquoise_ankh' && (
@@ -890,6 +981,12 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
   const [customMessage, setCustomMessage] = useState<BilingualText | null>(null);
   const [tipIndex, setTipIndex] = useState<number>(0);
   const [sparkleKey, setSparkleKey] = useState<number>(0);
+  const [reactionMood, setReactionMood] = useState<CharacterMood>('neutral');
+  const [mobileReaction, setMobileReaction] = useState<{
+    mood: 'happy' | 'sad';
+    message: BilingualText;
+    seq: number;
+  } | null>(null);
 
   const posRef = useRef<number>(14);
   const screenRef = useRef<GameScreenState>(screen);
@@ -899,6 +996,9 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
   const walkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bubbleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reactionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastHappyIdxRef = useRef<number>(-1);
+  const lastSadIdxRef = useRef<number>(-1);
 
   screenRef.current = screen;
   pausedRef.current = isPaused;
@@ -1081,33 +1181,59 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
     }
   }, [roundIndex, screen, isMobileViewport, flashDesktopBubble]);
 
-  // React to student answers during gameplay
+  // React to student answers during gameplay (short 1.5s non-blocking happy/sad reactions + varied messages + sounds)
   useEffect(() => {
     if (!lastAttemptFeedback || screen !== 'PLAYING' || isPaused) return;
+    if (reactionTimerRef.current) clearTimeout(reactionTimerRef.current);
 
     if (lastAttemptFeedback.isCorrect) {
-      triggerHop();
-      setCustomMessage(
-        streak >= 2
+      let nextIdx = Math.floor(Math.random() * HAPPY_REACTION_MESSAGES.length);
+      if (nextIdx === lastHappyIdxRef.current) {
+        nextIdx = (nextIdx + 1) % HAPPY_REACTION_MESSAGES.length;
+      }
+      lastHappyIdxRef.current = nextIdx;
+      const baseMsg = HAPPY_REACTION_MESSAGES[nextIdx];
+      const msg: BilingualText =
+        streak >= 3
           ? {
-              en: `Amazing! ${streak} in a row — you're a Nile math champion!`,
-              ar: `مذهل! ${streak} إجابات صحيحة متتالية — أنت بطل الرياضيات!`,
+              en: `${baseMsg.en} (${streak} in a row!)`,
+              ar: `${baseMsg.ar} (${streak} متتالية!)`,
             }
-          : {
-              en: 'Spot on! Awesome thinking — ready for the next one?',
-              ar: 'إجابة رائعة! تفكير ذكي جدًا — مستعد للسؤال التالي؟',
-            }
-      );
-      flashDesktopBubble(2300);
-    } else if (currentQuestion) {
+          : baseMsg;
+
+      setReactionMood('happy');
       triggerHop();
-      setCustomMessage({
-        en: `Nice try! Tip: ${currentQuestion.data.hint.en}`,
-        ar: `محاولة جميلة! تلميح: ${currentQuestion.data.hint.ar}`,
-      });
-      flashDesktopBubble(6000);
+      soundEngine.playCheer();
+      setCustomMessage(msg);
+      flashDesktopBubble(1800);
+      if (isMobileViewport) {
+        setMobileReaction({ mood: 'happy', message: msg, seq: lastAttemptFeedback.seq });
+      }
+      reactionTimerRef.current = setTimeout(() => {
+        setReactionMood('neutral');
+        setMobileReaction(null);
+      }, 1500);
+    } else {
+      let nextIdx = Math.floor(Math.random() * ENCOURAGE_REACTION_MESSAGES.length);
+      if (nextIdx === lastSadIdxRef.current) {
+        nextIdx = (nextIdx + 1) % ENCOURAGE_REACTION_MESSAGES.length;
+      }
+      lastSadIdxRef.current = nextIdx;
+      const msg = ENCOURAGE_REACTION_MESSAGES[nextIdx];
+
+      setReactionMood('sad');
+      soundEngine.playEncourage();
+      setCustomMessage(msg);
+      flashDesktopBubble(2000);
+      if (isMobileViewport) {
+        setMobileReaction({ mood: 'sad', message: msg, seq: lastAttemptFeedback.seq });
+      }
+      reactionTimerRef.current = setTimeout(() => {
+        setReactionMood('neutral');
+        setMobileReaction(null);
+      }, 1700);
     }
-  }, [lastAttemptFeedback, screen, isPaused, streak, currentQuestion, triggerHop, flashDesktopBubble]);
+  }, [lastAttemptFeedback, screen, isPaused, streak, isMobileViewport, triggerHop, flashDesktopBubble]);
 
   const handleTapCompanion = () => {
     if (isPaused) return;
@@ -1160,8 +1286,8 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
     }
   };
 
-  // While Pause or Round Summary modal is open, keep the companion visually quiet & non-interactive behind the modal
-  if (screen === 'PAUSED' || screen === 'ROUND_SUMMARY') {
+  // Hide companion during Pause, Round Summary, or calm Placement Exam
+  if (screen === 'PAUSED' || screen === 'ROUND_SUMMARY' || screen === 'PLACEMENT_EXAM') {
     return null;
   }
 
@@ -1170,7 +1296,6 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
   const isPlaying = screen === 'PLAYING';
 
   // Hide the bottom walking track during PLAYING on narrow phones (< 768px) so answers are 100% unobstructed.
-  // Kids tap the top-bar Guide button to open the top-anchored coaching sheet featuring the big character portrait!
   const showBottomWalker = !(isMobileViewport && isPlaying);
 
   const bubbleAlignClass =
@@ -1185,6 +1310,48 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
 
   return (
     <>
+      {/* Non-blocking 1.5s Mobile Answer Reaction Chip (pointer-events-none, top-docked away from answers) */}
+      <AnimatePresence>
+        {isMobileViewport && isPlaying && mobileReaction && !mobileGuideOpen && (
+          <motion.div
+            key={`mob-react-${mobileReaction.seq}`}
+            initial={{ opacity: 0, y: -10, scale: 0.94 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.94 }}
+            transition={{ duration: prefersReducedMotion ? 0.05 : 0.18 }}
+            dir={lang === 'ar' ? 'rtl' : 'ltr'}
+            role="status"
+            aria-live="polite"
+            className={`pointer-events-none fixed top-15 inset-x-4 z-35 rounded-2xl px-3 py-2 border-2 shadow-lg flex items-center gap-2.5 ${
+              mobileReaction.mood === 'happy'
+                ? 'bg-[#ECFDF5]/96 border-[#16A34A] text-[#14532D]'
+                : 'bg-[#FFF7ED]/96 border-[#D97706] text-[#9A3412]'
+            }`}
+          >
+            <div className="shrink-0 -my-1">
+              {activeCharacter === 'crocodile' ? (
+                <NileCrocodileSvg
+                  isWalking={false}
+                  isHappy={mobileReaction.mood === 'happy'}
+                  mood={mobileReaction.mood}
+                  cosmetics={cosmetics}
+                  size={54}
+                />
+              ) : (
+                <HorusFalconSvg
+                  isWalking={false}
+                  isHappy={mobileReaction.mood === 'happy'}
+                  mood={mobileReaction.mood}
+                  cosmetics={cosmetics}
+                  size={50}
+                />
+              )}
+            </div>
+            <p className="text-xs font-extrabold leading-snug">{mobileReaction.message[lang]}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Mobile (< md) Top-Docked Coaching Sheet — NEVER covers bottom answers or Title progress chart */}
       <AnimatePresence>
         {isMobileViewport && mobileGuideOpen && (
@@ -1201,9 +1368,21 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
           >
             <div className="shrink-0 -my-1">
               {activeCharacter === 'crocodile' ? (
-                <NileCrocodileSvg isWalking={false} isHappy={true} cosmetics={cosmetics} size={74} />
+                <NileCrocodileSvg
+                  isWalking={false}
+                  isHappy={reactionMood !== 'sad'}
+                  mood={reactionMood}
+                  cosmetics={cosmetics}
+                  size={74}
+                />
               ) : (
-                <HorusFalconSvg isWalking={false} isHappy={true} cosmetics={cosmetics} size={68} />
+                <HorusFalconSvg
+                  isWalking={false}
+                  isHappy={reactionMood !== 'sad'}
+                  mood={reactionMood}
+                  cosmetics={cosmetics}
+                  size={68}
+                />
               )}
             </div>
 
@@ -1225,8 +1404,8 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
                     onClick={handleSwapCharacter}
                     aria-label={
                       activeCharacter === 'crocodile'
-                        ? 'Switch guide to Horus the Falcon'
-                        : 'Switch guide to Sobek the Nile Crocodile'
+                        ? t(UI_TEXT.switchToHorusAria, lang)
+                        : t(UI_TEXT.switchToSobekAria, lang)
                     }
                     className="w-7 h-7 rounded-lg bg-[#F1EDE1] hover:bg-[#FEF3C7] text-[#133C3B] flex items-center justify-center cursor-pointer"
                   >
@@ -1235,7 +1414,7 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
                   <button
                     type="button"
                     onClick={() => onMobileGuideOpenChange(false)}
-                    aria-label="Hide guide tip"
+                    aria-label={t(UI_TEXT.hideGuideAria, lang)}
                     className="w-7 h-7 rounded-lg bg-[#F1EDE1] hover:bg-[#FEE2E2] text-[#475569] hover:text-[#133C3B] flex items-center justify-center cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -1302,8 +1481,8 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
                           onClick={handleSwapCharacter}
                           aria-label={
                             activeCharacter === 'crocodile'
-                              ? 'Switch guide to Horus the Falcon'
-                              : 'Switch guide to Sobek the Nile Crocodile'
+                              ? t(UI_TEXT.switchToHorusAria, lang)
+                              : t(UI_TEXT.switchToSobekAria, lang)
                           }
                           title={
                             activeCharacter === 'crocodile'
@@ -1325,7 +1504,7 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
                             e.stopPropagation();
                             setDesktopBubbleOpen(false);
                           }}
-                          aria-label="Hide guide tip"
+                          aria-label={t(UI_TEXT.hideGuideAria, lang)}
                           className="w-6 h-6 rounded-lg bg-[#F1EDE1] hover:bg-[#FEE2E2] text-[#475569] hover:text-[#133C3B] flex items-center justify-center cursor-pointer transition-colors"
                         >
                           <X className="w-3.5 h-3.5" />
@@ -1395,12 +1574,17 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
                   }}
                 />
 
-                {/* Hop Wrapper */}
+                {/* Hop / Droop Reaction Wrapper */}
                 <div
                   className="transition-transform duration-200 ease-out"
                   style={{
-                    transform:
-                      isHopping && !prefersReducedMotion ? 'translateY(-18px)' : 'translateY(0px)',
+                    transform: prefersReducedMotion
+                      ? 'translateY(0px)'
+                      : reactionMood === 'sad'
+                      ? 'translateY(4px) rotate(-5deg)'
+                      : isHopping || reactionMood === 'happy'
+                      ? 'translateY(-22px)'
+                      : 'translateY(0px)',
                   }}
                 >
                   {/* Facing Direction Wrapper */}
@@ -1415,14 +1599,16 @@ export const WalkingCompanion: React.FC<WalkingCompanionProps> = ({
                       {activeCharacter === 'crocodile' ? (
                         <NileCrocodileSvg
                           isWalking={isWalking && !prefersReducedMotion}
-                          isHappy={isHopping}
+                          isHappy={isHopping || reactionMood === 'happy'}
+                          mood={reactionMood}
                           cosmetics={cosmetics}
                           size={crocSize}
                         />
                       ) : (
                         <HorusFalconSvg
                           isWalking={isWalking && !prefersReducedMotion}
-                          isHappy={isHopping}
+                          isHappy={isHopping || reactionMood === 'happy'}
+                          mood={reactionMood}
                           cosmetics={cosmetics}
                           size={horusSize}
                         />

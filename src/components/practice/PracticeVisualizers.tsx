@@ -134,7 +134,7 @@ const PlaceValueLab: React.FC<LabProps> = ({ lang }) => {
                 <button
                   type="button"
                   onClick={() => adjust(setHundreds, -1, 0, 9)}
-                  aria-label="Decrease hundreds"
+                  aria-label={lang === 'ar' ? 'إنقاص المئات' : 'Decrease hundreds'}
                   className="flex-1 h-10 rounded-xl bg-white border border-[#C2410C]/40 text-[#C2410C] flex items-center justify-center hover:bg-[#FFEDD5] cursor-pointer"
                 >
                   <Minus className="w-4 h-4" />
@@ -145,7 +145,7 @@ const PlaceValueLab: React.FC<LabProps> = ({ lang }) => {
                 <button
                   type="button"
                   onClick={() => adjust(setHundreds, 1, 0, 9)}
-                  aria-label="Increase hundreds"
+                  aria-label={lang === 'ar' ? 'زيادة المئات' : 'Increase hundreds'}
                   className="flex-1 h-10 rounded-xl bg-[#C2410C] text-white flex items-center justify-center hover:bg-[#9A3412] cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
@@ -180,7 +180,7 @@ const PlaceValueLab: React.FC<LabProps> = ({ lang }) => {
                 <button
                   type="button"
                   onClick={() => adjust(setTens, -1, 0, 9)}
-                  aria-label="Decrease tens"
+                  aria-label={lang === 'ar' ? 'إنقاص العشرات' : 'Decrease tens'}
                   className="flex-1 h-10 rounded-xl bg-white border border-[#0F766E]/40 text-[#0F766E] flex items-center justify-center hover:bg-[#CCFBF1] cursor-pointer"
                 >
                   <Minus className="w-4 h-4" />
@@ -191,7 +191,7 @@ const PlaceValueLab: React.FC<LabProps> = ({ lang }) => {
                 <button
                   type="button"
                   onClick={() => adjust(setTens, 1, 0, 9)}
-                  aria-label="Increase tens"
+                  aria-label={lang === 'ar' ? 'زيادة العشرات' : 'Increase tens'}
                   className="flex-1 h-10 rounded-xl bg-[#0F766E] text-white flex items-center justify-center hover:bg-[#115E59] cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
@@ -222,7 +222,7 @@ const PlaceValueLab: React.FC<LabProps> = ({ lang }) => {
                 <button
                   type="button"
                   onClick={() => adjust(setOnes, -1, 0, 9)}
-                  aria-label="Decrease ones"
+                  aria-label={lang === 'ar' ? 'إنقاص الآحاد' : 'Decrease ones'}
                   className="flex-1 h-10 rounded-xl bg-white border border-[#1D4ED8]/40 text-[#1D4ED8] flex items-center justify-center hover:bg-[#DBEAFE] cursor-pointer"
                 >
                   <Minus className="w-4 h-4" />
@@ -233,7 +233,7 @@ const PlaceValueLab: React.FC<LabProps> = ({ lang }) => {
                 <button
                   type="button"
                   onClick={() => adjust(setOnes, 1, 0, 9)}
-                  aria-label="Increase ones"
+                  aria-label={lang === 'ar' ? 'زيادة الآحاد' : 'Increase ones'}
                   className="flex-1 h-10 rounded-xl bg-[#1D4ED8] text-white flex items-center justify-center hover:bg-[#1E40AF] cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
@@ -256,7 +256,7 @@ const PlaceValueLab: React.FC<LabProps> = ({ lang }) => {
                 max={999}
                 value={leftNum}
                 onChange={(e) => setLeftNum(Number(e.target.value))}
-                aria-label="First 3-digit number"
+                aria-label={lang === 'ar' ? 'العدد الأول المكوّن من ٣ أرقام' : 'First 3-digit number'}
                 className="w-full accent-[#C2410C]"
               />
               <div className="grid grid-cols-3 gap-2 text-center text-xs font-bold tabular-nums">
@@ -289,7 +289,7 @@ const PlaceValueLab: React.FC<LabProps> = ({ lang }) => {
                 max={999}
                 value={rightNum}
                 onChange={(e) => setRightNum(Number(e.target.value))}
-                aria-label="Second 3-digit number"
+                aria-label={lang === 'ar' ? 'العدد الثاني المكوّن من ٣ أرقام' : 'Second 3-digit number'}
                 className="w-full accent-[#0F766E]"
               />
               <div className="grid grid-cols-3 gap-2 text-center text-xs font-bold tabular-nums">
@@ -496,7 +496,7 @@ const MoneyLab: React.FC<LabProps> = ({ lang }) => {
               step={5}
               value={safePrice}
               onChange={(e) => setItemPrice(Number(e.target.value))}
-              aria-label="Item price in LE"
+              aria-label={lang === 'ar' ? 'سعر السلعة بالجنيه' : 'Item price in LE'}
               className="w-full accent-[#D97706]"
             />
           </div>
@@ -812,7 +812,7 @@ const ArraysLab: React.FC<LabProps> = ({ lang }) => {
                 soundEngine.playClick();
                 setRows((r) => Math.max(1, r - 1));
               }}
-              aria-label="Fewer rows"
+              aria-label={lang === 'ar' ? 'صفوف أقل' : 'Fewer rows'}
               className="w-10 h-10 rounded-xl bg-white border border-[#133C3B]/20 flex items-center justify-center hover:bg-[#CCFBF1] cursor-pointer"
             >
               <Minus className="w-4 h-4" />
@@ -823,7 +823,7 @@ const ArraysLab: React.FC<LabProps> = ({ lang }) => {
                 soundEngine.playClick();
                 setRows((r) => Math.min(6, r + 1));
               }}
-              aria-label="More rows"
+              aria-label={lang === 'ar' ? 'صفوف أكثر' : 'More rows'}
               className="w-10 h-10 rounded-xl bg-[#0F766E] text-white flex items-center justify-center hover:bg-[#115E59] cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -845,7 +845,7 @@ const ArraysLab: React.FC<LabProps> = ({ lang }) => {
                 soundEngine.playClick();
                 setCols((c) => Math.max(1, c - 1));
               }}
-              aria-label="Fewer columns"
+              aria-label={lang === 'ar' ? 'أعمدة أقل' : 'Fewer columns'}
               className="w-10 h-10 rounded-xl bg-white border border-[#133C3B]/20 flex items-center justify-center hover:bg-[#FEF3C7] cursor-pointer"
             >
               <Minus className="w-4 h-4" />
@@ -856,7 +856,7 @@ const ArraysLab: React.FC<LabProps> = ({ lang }) => {
                 soundEngine.playClick();
                 setCols((c) => Math.min(6, c + 1));
               }}
-              aria-label="More columns"
+              aria-label={lang === 'ar' ? 'أعمدة أكثر' : 'More columns'}
               className="w-10 h-10 rounded-xl bg-[#D97706] text-white flex items-center justify-center hover:bg-[#B45309] cursor-pointer"
             >
               <Plus className="w-4 h-4" />

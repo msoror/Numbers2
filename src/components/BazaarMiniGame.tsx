@@ -3,8 +3,10 @@ import { AlertCircle, ArrowRight, Check, Lightbulb, RotateCcw } from 'lucide-rea
 import { t, UI_TEXT } from '../data/i18n';
 import { usePausableTimer } from '../hooks/usePausableTimer';
 import { BazaarQuestion, BilingualText, Language, RoundAdvancePayload } from '../types/game';
+import egyptBazaarBg from '../assets/images/egypt_bazaar_bg.webp';
 import { soundEngine } from '../utils/sound';
 import { EgyptianBanknoteSvg } from './EgyptSvgs';
+import { ReadAloudButton } from './ReadAloudButton';
 
 interface BazaarMiniGameProps {
   question: BazaarQuestion;
@@ -196,9 +198,8 @@ export const BazaarMiniGame: React.FC<BazaarMiniGameProps> = ({
         aria-hidden="true"
       >
         <img
-          src="/src/assets/images/egypt_bazaar_bg_1794872910525.jpg"
-          alt="Cairo bazaar merchant stall"
-          referrerPolicy="no-referrer"
+          src={egyptBazaarBg}
+          alt=""
           className="w-full h-full object-cover opacity-90"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/25" />
@@ -206,10 +207,11 @@ export const BazaarMiniGame: React.FC<BazaarMiniGameProps> = ({
 
       {/* Zone 1: Top Prompt Card */}
       <div className="relative z-10 pt-16 sm:pt-17 px-3 sm:px-4 flex justify-center shrink-0">
-        <div className="bg-[#FFFDF7] border-2 border-[#133C3B] rounded-2xl px-4 sm:px-6 py-2.5 sm:py-3 shadow-md text-center max-w-2xl w-full">
-          <h2 className="font-display text-lg sm:text-2xl font-bold text-[#133C3B] leading-snug">
+        <div className="bg-[#FFFDF7] border-2 border-[#133C3B] rounded-2xl px-3.5 sm:px-6 py-2.5 sm:py-3 shadow-md max-w-2xl w-full flex items-center justify-between gap-2.5">
+          <h2 className="font-display text-lg sm:text-2xl font-bold text-[#133C3B] leading-snug text-center flex-1">
             {t(question.prompt, lang)}
           </h2>
+          <ReadAloudButton text={t(question.prompt, lang)} lang={lang} disabled={isPaused} compact />
         </div>
       </div>
 
@@ -218,12 +220,27 @@ export const BazaarMiniGame: React.FC<BazaarMiniGameProps> = ({
         {question.kind === 'place_value' && (
           <div
             dir="ltr"
+            role="group"
+            aria-label={
+              lang === 'ar'
+                ? question.hundreds > 0
+                  ? `مكعبات القيمة المكانية: ${question.hundreds} مئات و ${question.tens} عشرات و ${question.ones} آحاد`
+                  : `مكعبات القيمة المكانية: ${question.tens} عشرات و ${question.ones} آحاد`
+                : question.hundreds > 0
+                ? `Place value blocks: ${question.hundreds} hundreds, ${question.tens} tens, and ${question.ones} ones`
+                : `Place value blocks: ${question.tens} tens and ${question.ones} ones`
+            }
             className="w-full max-w-3xl bg-[#FFFDF7]/95 border-2 border-[#133C3B] rounded-3xl p-3 sm:p-6 shadow-xl grid grid-cols-3 gap-2 sm:gap-5"
           >
             {/* Hundreds Column */}
             <button
               type="button"
               disabled={isPaused}
+              aria-label={
+                lang === 'ar'
+                  ? `${question.hundreds} مئات`
+                  : `${question.hundreds} hundreds`
+              }
               onClick={() => {
                 if (isPaused) return;
                 soundEngine.playTapNote(0);
@@ -260,6 +277,11 @@ export const BazaarMiniGame: React.FC<BazaarMiniGameProps> = ({
             <button
               type="button"
               disabled={isPaused}
+              aria-label={
+                lang === 'ar'
+                  ? `${question.tens} عشرات`
+                  : `${question.tens} tens`
+              }
               onClick={() => {
                 if (isPaused) return;
                 soundEngine.playTapNote(2);
@@ -292,6 +314,11 @@ export const BazaarMiniGame: React.FC<BazaarMiniGameProps> = ({
             <button
               type="button"
               disabled={isPaused}
+              aria-label={
+                lang === 'ar'
+                  ? `${question.ones} آحاد`
+                  : `${question.ones} ones`
+              }
               onClick={() => {
                 if (isPaused) return;
                 soundEngine.playTapNote(4);

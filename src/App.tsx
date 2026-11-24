@@ -1,16 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Languages, Lightbulb, Music, Pause, Volume2, VolumeX } from 'lucide-react';
-import { BazaarMiniGame } from './components/BazaarMiniGame';
-import { ClockMiniGame } from './components/ClockMiniGame';
 import { PauseModal, RoundSummaryModal } from './components/GameModals';
-import { NileMiniGame } from './components/NileMiniGame';
-import { PracticeMenuScreen } from './components/PracticeMenuScreen';
-import { PracticeSubjectLab } from './components/PracticeSubjectLab';
-import { StickerBookScreen } from './components/StickerBookScreen';
 import { TitleScreen } from './components/TitleScreen';
 import { WalkingCompanion } from './components/WalkingCompanion';
-import { WorkshopMeasureMiniGame } from './components/WorkshopMeasureMiniGame';
-import { WorldMapScreen } from './components/WorldMapScreen';
 import {
   EGYPT_LEVELS,
   EGYPT_SUBJECTS,
@@ -20,9 +12,11 @@ import {
 } from './data/egyptLevels';
 import { t, UI_TEXT } from './data/i18n';
 import {
+  ActiveLevelSessionSnapshot,
   ActiveQuestion,
   GameScreenState,
   LevelConfig,
+  PlacementExamResult,
   PlayerProgress,
   PracticeSubjectId,
   RoundAdvancePayload,
@@ -34,18 +28,53 @@ import {
 import {
   advanceRoundSession,
   appendLevelAttempt,
+  clearActiveLevelSession,
   computeRoundRewards,
   createDefaultProgress,
   createRoundSession,
   getLevelRecentAccuracy,
   getNextContinueLevel,
   isLevelMastered,
+  loadActiveLevelSession,
   migrateProgress,
   recordRoundAttempt,
   REPEATED_MISTAKE_THRESHOLD,
   RoundSessionState,
+  saveActiveLevelSession,
 } from './utils/scoring';
 import { soundEngine } from './utils/sound';
+import { stopSpeech } from './utils/speech';
+
+// Code-split heavy screens and mini-games so initial bundle stays lean
+const BazaarMiniGame = lazy(() =>
+  import('./components/BazaarMiniGame').then((m) => ({ default: m.BazaarMiniGame }))
+);
+const NileMiniGame = lazy(() =>
+  import('./components/NileMiniGame').then((m) => ({ default: m.NileMiniGame }))
+);
+const ClockMiniGame = lazy(() =>
+  import('./components/ClockMiniGame').then((m) => ({ default: m.ClockMiniGame }))
+);
+const WorkshopMeasureMiniGame = lazy(() =>
+  import('./components/WorkshopMeasureMiniGame').then((m) => ({
+    default: m.WorkshopMeasureMiniGame,
+  }))
+);
+const WorldMapScreen = lazy(() =>
+  import('./components/WorldMapScreen').then((m) => ({ default: m.WorldMapScreen }))
+);
+const PracticeMenuScreen = lazy(() =>
+  import('./components/PracticeMenuScreen').then((m) => ({ default: m.PracticeMenuScreen }))
+);
+const PracticeSubjectLab = lazy(() =>
+  import('./components/PracticeSubjectLab').then((m) => ({ default: m.PracticeSubjectLab }))
+);
+const StickerBookScreen = lazy(() =>
+  import('./components/StickerBookScreen').then((m) => ({ default: m.StickerBookScreen }))
+);
+const PlacementExamScreen = lazy(() =>
+  import('./components/PlacementExamScreen').then((m) => ({ default: m.PlacementExamScreen }))
+);
 
 const STORAGE_KEY = 'nile_numbers_p2_progress_v1';
 
@@ -70,6 +99,7 @@ export default function App() {
   const [practiceFilter, setPracticeFilter] = useState<WorldId | 'all'>('all');
   const [activePracticeSubject, setActivePracticeSubject] =
     useState<PracticeSubjectId>('place_value');
+  const [placementInitialView, setPlacementInitialView] = useState<'exam' | 'results'>('exam');
 
   const [activeLevel, setActiveLevel] = useState<LevelConfig>(EGYPT_LEVELS[0]);
   const [activeQuestions, setActiveQuestions] = useState<ActiveQuestion[]>([]);
@@ -81,6 +111,10 @@ export default function App() {
     createRoundSession(6, 0)
   );
   const roundSessionRef = useRef<RoundSessionState>(roundSession);
+
+  const [unfinishedSession, setUnfinishedSession] = useState<ActiveLevelSessionSnapshot | null>(
+    () => loadActiveLevelSession(VALID_LEVEL_IDS)
+  );
 
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null);
   const [lastAttemptFeedback, setLastAttemptFeedback] = useState<{
@@ -96,6 +130,17 @@ export default function App() {
     () => getNextContinueLevel(EGYPT_LEVELS, progress),
     [progress]
   );
+
+  // Sync HTML root lang & dir attributes whenever the language changes
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  }, [lang]);
+
+  // Cancel any active speech synthesis when leaving a screen or pausing
+  useEffect(() => {
+    stopSpeech();
+  }, [screen, lang]);
 
   useEffect(() => {
     soundEngine.setMuted(progress.muted);
@@ -121,6 +166,32 @@ export default function App() {
       window.removeEventListener('keydown', unlockAndStartMusic);
     };
   }, [progress.muted, progress.musicEnabled]);
+
+  const persistUnfinishedSession = useCallback(
+    (levelId: string, questions: ActiveQuestion[], session: RoundSessionState) => {
+      if (session.finished || questions.length === 0) {
+        clearActiveLevelSession();
+        setUnfinishedSession(null);
+        return;
+      }
+      const snapshot: ActiveLevelSessionSnapshot = {
+        levelId,
+        questions,
+        roundIndex: session.roundIndex,
+        totalRounds: session.totalRounds,
+        missedCurrentRound: session.missedCurrentRound,
+        resolvedCurrentRound: false,
+        firstTryCount: session.firstTryCount,
+        streak: session.streak,
+        bestStreak: session.bestStreak,
+        mistakeSkills: [...session.mistakeSkills],
+        savedAt: Date.now(),
+      };
+      saveActiveLevelSession(snapshot);
+      setUnfinishedSession(snapshot);
+    },
+    []
+  );
 
   const toggleMute = useCallback(() => {
     setProgress((prev) => {
@@ -249,6 +320,26 @@ export default function App() {
     setScreen('STICKER_BOOK');
   }, []);
 
+  const openLevelCheck = useCallback((view: 'exam' | 'results' = 'exam') => {
+    soundEngine.playClick();
+    setMobileGuideOpen(false);
+    setPlacementInitialView(view);
+    setScreen('PLACEMENT_EXAM');
+  }, []);
+
+  const handleDismissPlacementPrompt = useCallback(() => {
+    setProgress((prev) =>
+      prev.hasDismissedPlacementPrompt ? prev : { ...prev, hasDismissedPlacementPrompt: true }
+    );
+  }, []);
+
+  const handleImportProgress = useCallback((imported: PlayerProgress) => {
+    soundEngine.playStickerUnlock();
+    clearActiveLevelSession();
+    setUnfinishedSession(null);
+    setProgress(imported);
+  }, []);
+
   const startLevel = useCallback(
     (level: LevelConfig) => {
       soundEngine.playClick();
@@ -270,10 +361,92 @@ export default function App() {
         level.roundsCount
       );
       setActiveQuestions(freshQuestions);
+      persistUnfinishedSession(level.id, freshQuestions, initialSession);
 
       setScreen('PLAYING');
     },
-    [progress.bestStreak]
+    [persistUnfinishedSession, progress.bestStreak]
+  );
+
+  const handleResumeUnfinishedLevel = useCallback(() => {
+    if (!unfinishedSession) return;
+    const savedLevel = EGYPT_LEVELS.find((l) => l.id === unfinishedSession.levelId);
+    if (!savedLevel || unfinishedSession.questions.length === 0) {
+      clearActiveLevelSession();
+      setUnfinishedSession(null);
+      return;
+    }
+
+    soundEngine.playClick();
+    setActiveLevel(savedLevel);
+    setIsTargetedRound(false);
+    setTargetedSkillKey(null);
+    setRepeatedMistakeSkill(null);
+    setRoundResult(null);
+    setLastAttemptFeedback(null);
+    setMobileGuideOpen(false);
+
+    const restoredSession: RoundSessionState = {
+      roundIndex: unfinishedSession.roundIndex,
+      totalRounds: unfinishedSession.totalRounds,
+      missedCurrentRound: unfinishedSession.missedCurrentRound,
+      resolvedCurrentRound: false,
+      firstTryCount: unfinishedSession.firstTryCount,
+      streak: unfinishedSession.streak,
+      bestStreak: Math.max(unfinishedSession.bestStreak, progress.bestStreak),
+      finished: false,
+      mistakeSkills: [...unfinishedSession.mistakeSkills],
+    };
+
+    roundSessionRef.current = restoredSession;
+    setRoundSession(restoredSession);
+    setActiveQuestions(unfinishedSession.questions);
+    setScreen('PLAYING');
+  }, [progress.bestStreak, unfinishedSession]);
+
+  const handleCompletePlacementExam = useCallback((result: PlacementExamResult) => {
+    setProgress((prev) => {
+      const nextHistory = [result, ...prev.placementHistory].slice(0, 5);
+      const nextRecommended = { ...prev.recommendedUnlockedLevels };
+      for (const subjRes of result.subjects) {
+        const existing = nextRecommended[subjRes.subjectId] ?? 0;
+        if (subjRes.recommendedStartLevel > existing) {
+          nextRecommended[subjRes.subjectId] = subjRes.recommendedStartLevel;
+        }
+      }
+      // Never penalize existing stars, mastery, stickers, or gems
+      return {
+        ...prev,
+        placementHistory: nextHistory,
+        recommendedUnlockedLevels: nextRecommended,
+        hasDismissedPlacementPrompt: true,
+      };
+    });
+  }, []);
+
+  const handleStartRecommendedPath = useCallback(
+    (result: PlacementExamResult) => {
+      const sortedWeakest = [...result.subjects].sort(
+        (a, b) => a.accuracy - b.accuracy || b.avgResponseMs - a.avgResponseMs
+      );
+      const weakestSubjectId =
+        result.topAreasToPractice[0] ?? sortedWeakest[0]?.subjectId ?? continueLevel.subjectId;
+      const weakestResult = result.subjects.find((s) => s.subjectId === weakestSubjectId);
+      const subjectLevels = EGYPT_LEVELS.filter((l) => l.subjectId === weakestSubjectId).sort(
+        (a, b) => a.levelNumber - b.levelNumber
+      );
+
+      const firstUnfinished =
+        subjectLevels.find((l) => (progress.starsByLevel[l.id] ?? 0) === 0) ??
+        subjectLevels.find(
+          (l) => l.levelNumber === (weakestResult?.recommendedStartLevel ?? 1)
+        ) ??
+        subjectLevels[0] ??
+        continueLevel;
+
+      startLevel(firstUnfinished);
+    },
+    [continueLevel, progress.starsByLevel, startLevel]
   );
 
   const startTargetedPractice = useCallback(
@@ -325,6 +498,10 @@ export default function App() {
       roundSessionRef.current = nextSession;
       setRoundSession(nextSession);
 
+      if (!isTargetedRound) {
+        persistUnfinishedSession(activeLevel.id, activeQuestions, nextSession);
+      }
+
       setLastAttemptFeedback((prev) => ({ isCorrect, seq: (prev?.seq ?? 0) + 1 }));
 
       if (isCorrect) {
@@ -347,7 +524,7 @@ export default function App() {
         });
       }
     },
-    [currentQuestion, isPaused]
+    [activeLevel.id, activeQuestions, currentQuestion, isPaused, isTargetedRound, persistUnfinishedSession]
   );
 
   const handleAdvanceRound = useCallback(
@@ -358,7 +535,15 @@ export default function App() {
       setRoundSession(nextSession);
 
       if (!nextSession.finished) {
+        if (!isTargetedRound) {
+          persistUnfinishedSession(activeLevel.id, activeQuestions, nextSession);
+        }
         return;
+      }
+
+      if (!isTargetedRound) {
+        clearActiveLevelSession();
+        setUnfinishedSession(null);
       }
 
       const rewards = computeRoundRewards(nextSession);
@@ -452,8 +637,10 @@ export default function App() {
     },
     [
       activeLevel,
+      activeQuestions,
       isPaused,
       isTargetedRound,
+      persistUnfinishedSession,
       progress.mistakeCountsBySkill,
       progress.unlockedStickers,
       targetedSkillKey,
@@ -471,15 +658,30 @@ export default function App() {
   const levelRecentAccPct = levelRecentAcc !== null ? Math.round(levelRecentAcc * 100) : null;
   const levelMasteredNow = isLevelMastered(activeLevel.id, progress);
 
+  const loadingFallback = (
+    <div
+      dir={lang === 'ar' ? 'rtl' : 'ltr'}
+      role="status"
+      className="w-full h-full flex items-center justify-center bg-[#FCF9F0] text-[#133C3B] font-display text-lg font-bold"
+    >
+      {lang === 'ar' ? 'جارٍ التحميل...' : 'Loading...'}
+    </div>
+  );
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#FCF9F0]">
       {screen === 'TITLE_MENU' && (
         <TitleScreen
           progress={progress}
           continueLevel={continueLevel}
+          unfinishedSession={unfinishedSession}
           onContinueLearning={startLevel}
+          onResumeUnfinishedLevel={handleResumeUnfinishedLevel}
           onStart={openGameMenu}
           onOpenPractice={() => openPracticeMenu('all')}
+          onOpenLevelCheck={openLevelCheck}
+          onDismissPlacementPrompt={handleDismissPlacementPrompt}
+          onImportProgress={handleImportProgress}
           onOpenStickers={openStickers}
           onToggleMute={toggleMute}
           onToggleMusic={toggleMusic}
@@ -487,303 +689,322 @@ export default function App() {
         />
       )}
 
-      {screen === 'MAP_SELECT' && (
-        <WorldMapScreen
-          progress={progress}
-          onSelectLevel={startLevel}
-          onBackToTitle={openHome}
-          onOpenPractice={openPracticeMenu}
-          onPracticeSubject={openPracticeSubject}
-          onOpenStickers={openStickers}
-          onToggleMute={toggleMute}
-          onToggleMusic={toggleMusic}
-          onToggleLang={toggleLanguage}
-        />
-      )}
+      <Suspense fallback={loadingFallback}>
+        {screen === 'MAP_SELECT' && (
+          <WorldMapScreen
+            progress={progress}
+            onSelectLevel={startLevel}
+            onBackToTitle={openHome}
+            onOpenPractice={openPracticeMenu}
+            onPracticeSubject={openPracticeSubject}
+            onOpenStickers={openStickers}
+            onOpenLevelCheck={() => openLevelCheck('exam')}
+            onToggleMute={toggleMute}
+            onToggleMusic={toggleMusic}
+            onToggleLang={toggleLanguage}
+          />
+        )}
 
-      {screen === 'PRACTICE_MENU' && (
-        <PracticeMenuScreen
-          progress={progress}
-          initialFilter={practiceFilter}
-          onSelectSubject={openPracticeSubject}
-          onMarkSubjectCelebrated={markSubjectCelebrated}
-          onNavigateHome={openHome}
-          onNavigateGame={openGameMenu}
-          onNavigateStickers={openStickers}
-          onToggleMute={toggleMute}
-          onToggleMusic={toggleMusic}
-          onToggleLang={toggleLanguage}
-        />
-      )}
+        {screen === 'PRACTICE_MENU' && (
+          <PracticeMenuScreen
+            progress={progress}
+            initialFilter={practiceFilter}
+            onSelectSubject={openPracticeSubject}
+            onMarkSubjectCelebrated={markSubjectCelebrated}
+            onNavigateHome={openHome}
+            onNavigateGame={openGameMenu}
+            onNavigateStickers={openStickers}
+            onNavigateExam={() => openLevelCheck('exam')}
+            onToggleMute={toggleMute}
+            onToggleMusic={toggleMusic}
+            onToggleLang={toggleLanguage}
+          />
+        )}
 
-      {screen === 'PRACTICE_SUBJECT' && (
-        <PracticeSubjectLab
-          subjectId={activePracticeSubject}
-          progress={progress}
-          onSelectSubject={openPracticeSubject}
-          onBackToMenu={() => openPracticeMenu('all')}
-          onLaunchLevel={startLevel}
-          onNavigateHome={openHome}
-          onNavigateGame={openGameMenu}
-          onNavigateStickers={openStickers}
-          onToggleMute={toggleMute}
-          onToggleMusic={toggleMusic}
-          onToggleLang={toggleLanguage}
-        />
-      )}
+        {screen === 'PRACTICE_SUBJECT' && (
+          <PracticeSubjectLab
+            subjectId={activePracticeSubject}
+            progress={progress}
+            onSelectSubject={openPracticeSubject}
+            onBackToMenu={() => openPracticeMenu('all')}
+            onLaunchLevel={startLevel}
+            onNavigateHome={openHome}
+            onNavigateGame={openGameMenu}
+            onNavigateStickers={openStickers}
+            onNavigateExam={() => openLevelCheck('exam')}
+            onToggleMute={toggleMute}
+            onToggleMusic={toggleMusic}
+            onToggleLang={toggleLanguage}
+          />
+        )}
 
-      {screen === 'STICKER_BOOK' && (
-        <StickerBookScreen
-          progress={progress}
-          onPurchaseCosmetic={handlePurchaseCosmetic}
-          onToggleEquipCosmetic={handleToggleEquipCosmetic}
-          onNavigateHome={openHome}
-          onNavigateGame={openGameMenu}
-          onNavigatePractice={() => openPracticeMenu('all')}
-          onToggleMute={toggleMute}
-          onToggleMusic={toggleMusic}
-          onToggleLang={toggleLanguage}
-        />
-      )}
+        {screen === 'STICKER_BOOK' && (
+          <StickerBookScreen
+            progress={progress}
+            onPurchaseCosmetic={handlePurchaseCosmetic}
+            onToggleEquipCosmetic={handleToggleEquipCosmetic}
+            onNavigateHome={openHome}
+            onNavigateGame={openGameMenu}
+            onNavigatePractice={() => openPracticeMenu('all')}
+            onNavigateExam={() => openLevelCheck('exam')}
+            onToggleMute={toggleMute}
+            onToggleMusic={toggleMusic}
+            onToggleLang={toggleLanguage}
+          />
+        )}
 
-      {(screen === 'PLAYING' || screen === 'PAUSED' || screen === 'ROUND_SUMMARY') && (
-        <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="relative w-full h-full">
-          {/* Background gameplay stage is inert & non-interactive while Paused */}
-          <div
-            aria-hidden={isPaused || screen === 'ROUND_SUMMARY'}
-            className={`w-full h-full ${
-              isPaused || screen === 'ROUND_SUMMARY' ? 'pointer-events-none select-none' : ''
-            }`}
-          >
-            {/* Responsive Phone & Desktop Top Perimeter HUD */}
-            <div className="pointer-events-none fixed top-0 left-0 right-0 z-30 px-3 sm:px-4 pt-2.5 sm:pt-3 flex items-center justify-between gap-2">
-              <div className="pointer-events-auto flex items-center gap-2 min-w-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playClick();
-                    setMobileGuideOpen(false);
-                    setScreen('PAUSED');
-                  }}
-                  aria-label={t(UI_TEXT.pause, lang)}
-                  className="h-10 px-2.5 sm:px-3.5 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-sm hover:bg-[#FEF3C7] transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  <Pause className="w-4 h-4 shrink-0" />
-                  <span className="hidden sm:inline">{t(UI_TEXT.pause, lang)}</span>
-                </button>
+        {screen === 'PLACEMENT_EXAM' && (
+          <PlacementExamScreen
+            lang={lang}
+            placementHistory={progress.placementHistory}
+            initialView={placementInitialView}
+            onCompleteExam={handleCompletePlacementExam}
+            onStartRecommendedPath={handleStartRecommendedPath}
+            onExit={openHome}
+          />
+        )}
 
-                {/* Non-truncating Question X/Y indicator (compact on 390px phone, full context on >= md) */}
-                <div className="bg-[#FFFDF7]/95 border-2 border-[#133C3B]/30 rounded-xl px-3 py-1.5 text-xs sm:text-sm font-bold text-[#133C3B] tabular-nums shadow-xs flex items-center gap-1.5 min-w-0">
-                  <span className="hidden md:inline truncate">
-                    {isTargetedRound
-                      ? t(UI_TEXT.targetedRoundTitle, lang)
-                      : t(activeLevel.subjectName, lang)}
-                  </span>
-                  {!isTargetedRound && (
-                    <>
-                      <span className="hidden md:inline text-[#64748B]" aria-hidden="true">
-                        ·
-                      </span>
-                      <span className="hidden md:inline whitespace-nowrap shrink-0">
-                        {t(UI_TEXT.levelShort, lang)}
-                        {activeLevel.levelNumber}
-                      </span>
-                    </>
-                  )}
-                  <span className="hidden md:inline text-[#64748B]" aria-hidden="true">
-                    ·
-                  </span>
-                  <span className="whitespace-nowrap shrink-0">
-                    {t(UI_TEXT.questionLabel, lang)} {roundSession.roundIndex + 1}/
-                    {roundSession.totalRounds}
-                  </span>
-                </div>
-              </div>
+        {(screen === 'PLAYING' || screen === 'PAUSED' || screen === 'ROUND_SUMMARY') && (
+          <div dir={lang === 'ar' ? 'rtl' : 'ltr'} className="relative w-full h-full">
+            {/* Background gameplay stage is inert & non-interactive while Paused */}
+            <div
+              aria-hidden={isPaused || screen === 'ROUND_SUMMARY'}
+              className={`w-full h-full ${
+                isPaused || screen === 'ROUND_SUMMARY' ? 'pointer-events-none select-none' : ''
+              }`}
+            >
+              {/* Responsive Phone & Desktop Top Perimeter HUD */}
+              <div className="pointer-events-none fixed top-0 left-0 right-0 z-30 px-3 sm:px-4 pt-2.5 sm:pt-3 flex items-center justify-between gap-2">
+                <div className="pointer-events-auto flex items-center gap-2 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playClick();
+                      setMobileGuideOpen(false);
+                      setScreen('PAUSED');
+                    }}
+                    aria-label={t(UI_TEXT.pause, lang)}
+                    className="h-10 px-2.5 sm:px-3.5 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] font-bold text-xs sm:text-sm flex items-center gap-1.5 shadow-sm hover:bg-[#FEF3C7] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <Pause className="w-4 h-4 shrink-0" />
+                    <span className="hidden sm:inline">{t(UI_TEXT.pause, lang)}</span>
+                  </button>
 
-              <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
-                <div className="hidden lg:flex items-center gap-2 bg-[#FFFDF7]/95 border-2 border-[#133C3B]/30 rounded-xl px-3.5 py-1.5 text-sm font-bold text-[#133C3B] tabular-nums shadow-xs whitespace-nowrap">
-                  <span>
-                    {t(UI_TEXT.streak, lang)} {roundSession.streak}
-                  </span>
-                  <span className="text-[#64748B]" aria-hidden="true">
-                    ·
-                  </span>
-                  <span>
-                    {t(UI_TEXT.gems, lang)} {progress.totalGems}
-                  </span>
-                </div>
-
-                {/* Mobile-only compact Guide button (opens top coaching drawer away from answers) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundEngine.playClick();
-                    setMobileGuideOpen((open) => !open);
-                  }}
-                  aria-expanded={mobileGuideOpen}
-                  aria-label={t(UI_TEXT.guideButton, lang)}
-                  className={`md:hidden h-10 px-2.5 rounded-xl border-2 border-[#133C3B] font-bold text-xs flex items-center gap-1 shadow-sm cursor-pointer whitespace-nowrap shrink-0 ${
-                    mobileGuideOpen
-                      ? 'bg-[#FEF3C7] text-[#92400E]'
-                      : 'bg-[#FFFDF7] text-[#133C3B]'
-                  }`}
-                >
-                  <Lightbulb className="w-4 h-4 text-[#D97706] shrink-0" />
-                  <span>{t(UI_TEXT.guideButton, lang)}</span>
-                </button>
-
-                {/* Desktop-only Language & Lofi Music buttons (accessible inside Pause menu on < md phones) */}
-                <button
-                  type="button"
-                  onClick={toggleLanguage}
-                  aria-label="Toggle language"
-                  className="hidden md:flex h-10 px-3 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] font-bold text-xs items-center gap-1 shadow-sm hover:bg-[#E0F2FE] transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                >
-                  <Languages className="w-4 h-4 text-[#0D9488]" />
-                  <span>{lang === 'en' ? 'عربي' : 'EN'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={toggleMusic}
-                  aria-pressed={isMusicPlaying}
-                  aria-label={
-                    isMusicPlaying ? t(UI_TEXT.lofiMusicOn, lang) : t(UI_TEXT.lofiMusicOff, lang)
-                  }
-                  title={
-                    isMusicPlaying ? t(UI_TEXT.lofiMusicOn, lang) : t(UI_TEXT.lofiMusicOff, lang)
-                  }
-                  className={`hidden md:flex h-10 px-2.5 rounded-xl border-2 border-[#133C3B] font-bold text-xs items-center gap-1.5 shadow-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                    isMusicPlaying
-                      ? 'bg-[#FEF3C7] text-[#92400E]'
-                      : 'bg-[#FFFDF7] text-[#64748B] hover:text-[#133C3B]'
-                  }`}
-                >
-                  <Music className="w-4 h-4 shrink-0" />
-                  {isMusicPlaying && (
-                    <span className="inline-flex items-end gap-[2px] h-3" aria-hidden="true">
-                      <span className="w-[2.5px] h-3 rounded-full bg-[#D97706] animate-eq-bar" />
-                      <span
-                        className="w-[2.5px] h-2 rounded-full bg-[#D97706] animate-eq-bar"
-                        style={{ animationDelay: '0.25s' }}
-                      />
-                      <span
-                        className="w-[2.5px] h-3 rounded-full bg-[#D97706] animate-eq-bar"
-                        style={{ animationDelay: '0.5s' }}
-                      />
+                  {/* Non-truncating Question X/Y indicator (compact on 390px phone, full context on >= md) */}
+                  <div className="bg-[#FFFDF7]/95 border-2 border-[#133C3B]/30 rounded-xl px-3 py-1.5 text-xs sm:text-sm font-bold text-[#133C3B] tabular-nums shadow-xs flex items-center gap-1.5 min-w-0">
+                    <span className="hidden md:inline truncate">
+                      {isTargetedRound
+                        ? t(UI_TEXT.targetedRoundTitle, lang)
+                        : t(activeLevel.subjectName, lang)}
                     </span>
-                  )}
-                </button>
+                    {!isTargetedRound && (
+                      <>
+                        <span className="hidden md:inline text-[#64748B]" aria-hidden="true">
+                          ·
+                        </span>
+                        <span className="hidden md:inline whitespace-nowrap shrink-0">
+                          {t(UI_TEXT.levelShort, lang)}
+                          {activeLevel.levelNumber}
+                        </span>
+                      </>
+                    )}
+                    <span className="hidden md:inline text-[#64748B]" aria-hidden="true">
+                      ·
+                    </span>
+                    <span className="whitespace-nowrap shrink-0">
+                      {t(UI_TEXT.questionLabel, lang)} {roundSession.roundIndex + 1}/
+                      {roundSession.totalRounds}
+                    </span>
+                  </div>
+                </div>
 
-                <button
-                  type="button"
-                  onClick={toggleMute}
-                  aria-label={progress.muted ? 'Unmute sound' : 'Mute sound'}
-                  className="w-10 h-10 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] flex items-center justify-center shadow-sm hover:bg-[#FEF3C7] transition-colors cursor-pointer shrink-0"
-                >
-                  {progress.muted ? (
-                    <VolumeX className="w-4 h-4" />
-                  ) : (
-                    <Volume2 className="w-4 h-4" />
-                  )}
-                </button>
+                <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+                  <div className="hidden lg:flex items-center gap-2 bg-[#FFFDF7]/95 border-2 border-[#133C3B]/30 rounded-xl px-3.5 py-1.5 text-sm font-bold text-[#133C3B] tabular-nums shadow-xs whitespace-nowrap">
+                    <span>
+                      {t(UI_TEXT.streak, lang)} {roundSession.streak}
+                    </span>
+                    <span className="text-[#64748B]" aria-hidden="true">
+                      ·
+                    </span>
+                    <span>
+                      {t(UI_TEXT.gems, lang)} {progress.totalGems}
+                    </span>
+                  </div>
+
+                  {/* Mobile-only compact Guide button (opens top coaching drawer away from answers) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playClick();
+                      setMobileGuideOpen((open) => !open);
+                    }}
+                    aria-expanded={mobileGuideOpen}
+                    aria-label={t(UI_TEXT.guideButton, lang)}
+                    className={`md:hidden h-10 px-2.5 rounded-xl border-2 border-[#133C3B] font-bold text-xs flex items-center gap-1 shadow-sm cursor-pointer whitespace-nowrap shrink-0 ${
+                      mobileGuideOpen
+                        ? 'bg-[#FEF3C7] text-[#92400E]'
+                        : 'bg-[#FFFDF7] text-[#133C3B]'
+                    }`}
+                  >
+                    <Lightbulb className="w-4 h-4 text-[#D97706] shrink-0" />
+                    <span>{t(UI_TEXT.guideButton, lang)}</span>
+                  </button>
+
+                  {/* Desktop-only Language & Lofi Music buttons (accessible inside Pause menu on < md phones) */}
+                  <button
+                    type="button"
+                    onClick={toggleLanguage}
+                    aria-label={t(UI_TEXT.toggleLangAria, lang)}
+                    className="hidden md:flex h-10 px-3 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] font-bold text-xs items-center gap-1 shadow-sm hover:bg-[#E0F2FE] transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <Languages className="w-4 h-4 text-[#0D9488]" />
+                    <span>{lang === 'en' ? 'عربي' : 'EN'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={toggleMusic}
+                    aria-pressed={isMusicPlaying}
+                    aria-label={
+                      isMusicPlaying ? t(UI_TEXT.lofiMusicOn, lang) : t(UI_TEXT.lofiMusicOff, lang)
+                    }
+                    title={
+                      isMusicPlaying ? t(UI_TEXT.lofiMusicOn, lang) : t(UI_TEXT.lofiMusicOff, lang)
+                    }
+                    className={`hidden md:flex h-10 px-2.5 rounded-xl border-2 border-[#133C3B] font-bold text-xs items-center gap-1.5 shadow-sm transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                      isMusicPlaying
+                        ? 'bg-[#FEF3C7] text-[#92400E]'
+                        : 'bg-[#FFFDF7] text-[#64748B] hover:text-[#133C3B]'
+                    }`}
+                  >
+                    <Music className="w-4 h-4 shrink-0" />
+                    {isMusicPlaying && (
+                      <span className="inline-flex items-end gap-[2px] h-3" aria-hidden="true">
+                        <span className="w-[2.5px] h-3 rounded-full bg-[#D97706] animate-eq-bar" />
+                        <span
+                          className="w-[2.5px] h-2 rounded-full bg-[#D97706] animate-eq-bar"
+                          style={{ animationDelay: '0.25s' }}
+                        />
+                        <span
+                          className="w-[2.5px] h-3 rounded-full bg-[#D97706] animate-eq-bar"
+                          style={{ animationDelay: '0.5s' }}
+                        />
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={toggleMute}
+                    aria-label={
+                      progress.muted ? t(UI_TEXT.unmuteSound, lang) : t(UI_TEXT.muteSound, lang)
+                    }
+                    className="w-10 h-10 rounded-xl bg-[#FFFDF7] border-2 border-[#133C3B] text-[#133C3B] flex items-center justify-center shadow-sm hover:bg-[#FEF3C7] transition-colors cursor-pointer shrink-0"
+                  >
+                    {progress.muted ? (
+                      <VolumeX className="w-4 h-4" />
+                    ) : (
+                      <Volume2 className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
               </div>
+
+              {/* Active Mini-Game Stage */}
+              {currentQuestion?.stage === 'bazaar' && (
+                <BazaarMiniGame
+                  question={currentQuestion.data}
+                  lang={lang}
+                  isPaused={isPaused}
+                  onAttempt={handleAttempt}
+                  onAdvance={handleAdvanceRound}
+                />
+              )}
+
+              {currentQuestion?.stage === 'nile' && (
+                <NileMiniGame
+                  question={currentQuestion.data}
+                  lang={lang}
+                  isPaused={isPaused}
+                  onAttempt={handleAttempt}
+                  onAdvance={handleAdvanceRound}
+                />
+              )}
+
+              {currentQuestion?.stage === 'clock' && (
+                <ClockMiniGame
+                  question={currentQuestion.data}
+                  lang={lang}
+                  isPaused={isPaused}
+                  onAttempt={handleAttempt}
+                  onAdvance={handleAdvanceRound}
+                />
+              )}
+
+              {currentQuestion?.stage === 'workshop' && (
+                <WorkshopMeasureMiniGame
+                  question={currentQuestion.data}
+                  lang={lang}
+                  isPaused={isPaused}
+                  onAttempt={handleAttempt}
+                  onAdvance={handleAdvanceRound}
+                />
+              )}
             </div>
 
-            {/* Active Mini-Game Stage */}
-            {currentQuestion?.stage === 'bazaar' && (
-              <BazaarMiniGame
-                question={currentQuestion.data}
+            {/* Pause Overlay */}
+            {screen === 'PAUSED' && (
+              <PauseModal
+                level={activeLevel}
                 lang={lang}
-                isPaused={isPaused}
-                onAttempt={handleAttempt}
-                onAdvance={handleAdvanceRound}
+                muted={progress.muted}
+                musicEnabled={progress.musicEnabled}
+                onResume={() => {
+                  soundEngine.playClick();
+                  setScreen('PLAYING');
+                }}
+                onRestart={() =>
+                  isTargetedRound && targetedSkillKey
+                    ? startTargetedPractice(activeLevel, targetedSkillKey)
+                    : startLevel(activeLevel)
+                }
+                onExitToMap={openGameMenu}
+                onToggleMute={toggleMute}
+                onToggleMusic={toggleMusic}
+                onToggleLang={toggleLanguage}
               />
             )}
 
-            {currentQuestion?.stage === 'nile' && (
-              <NileMiniGame
-                question={currentQuestion.data}
+            {/* Victory / Round Summary Modal */}
+            {screen === 'ROUND_SUMMARY' && roundResult && (
+              <RoundSummaryModal
+                level={activeLevel}
                 lang={lang}
-                isPaused={isPaused}
-                onAttempt={handleAttempt}
-                onAdvance={handleAdvanceRound}
-              />
-            )}
-
-            {currentQuestion?.stage === 'clock' && (
-              <ClockMiniGame
-                question={currentQuestion.data}
-                lang={lang}
-                isPaused={isPaused}
-                onAttempt={handleAttempt}
-                onAdvance={handleAdvanceRound}
-              />
-            )}
-
-            {currentQuestion?.stage === 'workshop' && (
-              <WorkshopMeasureMiniGame
-                question={currentQuestion.data}
-                lang={lang}
-                isPaused={isPaused}
-                onAttempt={handleAttempt}
-                onAdvance={handleAdvanceRound}
+                result={roundResult}
+                hasNextLevel={!isTargetedRound && nextLevel !== null}
+                isTargetedRound={isTargetedRound}
+                levelRecentAccuracyPct={levelRecentAccPct}
+                isLevelMasteredNow={levelMasteredNow}
+                repeatedMistakeSkill={repeatedMistakeSkill}
+                onStartTargetedPractice={
+                  repeatedMistakeSkill
+                    ? () => startTargetedPractice(activeLevel, repeatedMistakeSkill)
+                    : undefined
+                }
+                onNextLevel={() => {
+                  if (nextLevel) startLevel(nextLevel);
+                }}
+                onPlayAgain={() =>
+                  isTargetedRound && targetedSkillKey
+                    ? startTargetedPractice(activeLevel, targetedSkillKey)
+                    : startLevel(activeLevel)
+                }
+                onExitToMap={openGameMenu}
               />
             )}
           </div>
-
-          {/* Pause Overlay */}
-          {screen === 'PAUSED' && (
-            <PauseModal
-              level={activeLevel}
-              lang={lang}
-              muted={progress.muted}
-              musicEnabled={progress.musicEnabled}
-              onResume={() => {
-                soundEngine.playClick();
-                setScreen('PLAYING');
-              }}
-              onRestart={() =>
-                isTargetedRound && targetedSkillKey
-                  ? startTargetedPractice(activeLevel, targetedSkillKey)
-                  : startLevel(activeLevel)
-              }
-              onExitToMap={openGameMenu}
-              onToggleMute={toggleMute}
-              onToggleMusic={toggleMusic}
-              onToggleLang={toggleLanguage}
-            />
-          )}
-
-          {/* Victory / Round Summary Modal */}
-          {screen === 'ROUND_SUMMARY' && roundResult && (
-            <RoundSummaryModal
-              level={activeLevel}
-              lang={lang}
-              result={roundResult}
-              hasNextLevel={!isTargetedRound && nextLevel !== null}
-              isTargetedRound={isTargetedRound}
-              levelRecentAccuracyPct={levelRecentAccPct}
-              isLevelMasteredNow={levelMasteredNow}
-              repeatedMistakeSkill={repeatedMistakeSkill}
-              onStartTargetedPractice={
-                repeatedMistakeSkill
-                  ? () => startTargetedPractice(activeLevel, repeatedMistakeSkill)
-                  : undefined
-              }
-              onNextLevel={() => {
-                if (nextLevel) startLevel(nextLevel);
-              }}
-              onPlayAgain={() =>
-                isTargetedRound && targetedSkillKey
-                  ? startTargetedPractice(activeLevel, targetedSkillKey)
-                  : startLevel(activeLevel)
-              }
-              onExitToMap={openGameMenu}
-            />
-          )}
-        </div>
-      )}
+        )}
+      </Suspense>
 
       {/* Theme-Linked Animated Walking Guides (Bigger Sobek & Horus + Cosmetics + Non-Overlapping Mobile Guide) */}
       <WalkingCompanion

@@ -22,6 +22,7 @@ interface PracticeSubjectLabProps {
   onNavigateHome: () => void;
   onNavigateGame: () => void;
   onNavigateStickers: () => void;
+  onNavigateExam: () => void;
   onToggleMute: () => void;
   onToggleMusic: () => void;
   onToggleLang: () => void;
@@ -36,6 +37,7 @@ export const PracticeSubjectLab: React.FC<PracticeSubjectLabProps> = ({
   onNavigateHome,
   onNavigateGame,
   onNavigateStickers,
+  onNavigateExam,
   onToggleMute,
   onToggleMusic,
   onToggleLang,
@@ -89,6 +91,7 @@ export const PracticeSubjectLab: React.FC<PracticeSubjectLabProps> = ({
         onNavigateHome={onNavigateHome}
         onNavigateGame={onNavigateGame}
         onNavigatePractice={onBackToMenu}
+        onNavigateExam={onNavigateExam}
         onNavigateStickers={onNavigateStickers}
         onToggleLang={onToggleLang}
         onToggleMute={onToggleMute}

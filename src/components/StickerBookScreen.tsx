@@ -16,6 +16,7 @@ interface StickerBookScreenProps {
   onNavigateHome: () => void;
   onNavigateGame: () => void;
   onNavigatePractice: () => void;
+  onNavigateExam: () => void;
   onToggleMute: () => void;
   onToggleMusic: () => void;
   onToggleLang: () => void;
@@ -156,6 +157,7 @@ export const StickerBookScreen: React.FC<StickerBookScreenProps> = ({
   onNavigateHome,
   onNavigateGame,
   onNavigatePractice,
+  onNavigateExam,
   onToggleMute,
   onToggleMusic,
   onToggleLang,
@@ -210,6 +212,7 @@ export const StickerBookScreen: React.FC<StickerBookScreenProps> = ({
         onNavigateHome={onNavigateHome}
         onNavigateGame={onNavigateGame}
         onNavigatePractice={onNavigatePractice}
+        onNavigateExam={onNavigateExam}
         onNavigateStickers={() => {}}
         onToggleLang={onToggleLang}
         onToggleMute={onToggleMute}
@@ -252,7 +255,7 @@ export const StickerBookScreen: React.FC<StickerBookScreenProps> = ({
         {/* Primary Tab Switcher: My Stickers vs Gem Shop */}
         <div
           role="tablist"
-          aria-label="Sticker Book sections"
+          aria-label={lang === 'ar' ? 'أقسام ألبوم الملصقات' : 'Sticker Book sections'}
           className="flex items-center gap-1.5 p-1.5 bg-[#F1EDE1] rounded-2xl w-fit"
         >
           <button
